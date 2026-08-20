@@ -1,0 +1,75 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Service {
+  id              String  @id @default(uuid()) @db.Uuid
+  name            String  @unique
+  description     String?
+  durationMinutes Int
+  price           Decimal @db.Decimal(10, 2)
+  isActive        Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations Reservation[]
+}
+
+model Barber {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations Reservation[]
+}
+
+model Customer {
+  id    String @id @default(uuid()) @db.Uuid
+  name  String
+  phone String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations Reservation[]
+}
+
+enum ReservationStatus {
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model Reservation {
+  id String @id @default(uuid()) @db.Uuid
+
+  customerId String @db.Uuid
+  barberId   String @db.Uuid
+  serviceId  String @db.Uuid
+
+  startTime DateTime
+  endTime   DateTime
+
+  status ReservationStatus @default(CONFIRMED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  barber   Barber   @relation(fields: [barberId], references: [id])
+  service  Service  @relation(fields: [serviceId], references: [id])
+
+  @@index([startTime])
+  @@index([barberId, startTime])
+  @@index([customerId])
+}
