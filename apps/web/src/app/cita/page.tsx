@@ -67,6 +67,8 @@ export default function MiCitaPage() {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false,
+                timeZone:
+                    'America/Mexico_City',
             },
         );
     };

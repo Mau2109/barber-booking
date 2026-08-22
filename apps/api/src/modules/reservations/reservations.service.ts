@@ -6,30 +6,38 @@ import {
 
 import { PrismaService } from '../../database/prisma.service';
 
+import {
+    barberLocalToUtc,
+    utcToBarberLocal,
+} from '../../common/date-time';
+
 @Injectable()
 export class ReservationsService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+    ) { }
 
     // ============================================================
     // 1. CREAR RESERVACIÓN
     // ============================================================
-    // ============================================================
-    // 1. CREAR RESERVACIÓN
-    // ============================================================
+
     async create(data: {
         customerId: string;
         serviceId: string;
+        date: string;
         startTime: string;
     }) {
         const {
             customerId,
             serviceId,
+            date,
             startTime,
         } = data;
 
         // ========================================================
         // 1.1 VERIFICAR CLIENTE
         // ========================================================
+
         const customer =
             await this.prisma.customer.findUnique({
                 where: {
@@ -46,6 +54,7 @@ export class ReservationsService {
         // ========================================================
         // 1.2 VERIFICAR SERVICIO
         // ========================================================
+
         const service =
             await this.prisma.service.findUnique({
                 where: {
@@ -53,189 +62,411 @@ export class ReservationsService {
                 },
             });
 
-        if (!service || !service.isActive) {
+        if (
+            !service ||
+            !service.isActive
+        ) {
             throw new NotFoundException(
                 'El servicio no existe o no está disponible',
             );
         }
 
         // ========================================================
-        // 1.3 VALIDAR FECHA DE INICIO
+        // 1.3 CONVERTIR FECHA/HORA LOCAL A UTC
         // ========================================================
-        const start = new Date(startTime);
 
-        if (Number.isNaN(start.getTime())) {
+        const start =
+            barberLocalToUtc(
+                date,
+                startTime,
+            );
+
+        if (
+            Number.isNaN(
+                start.getTime(),
+            )
+        ) {
             throw new BadRequestException(
-                'La fecha de inicio no es válida',
+                'La fecha u hora de inicio no es válida',
             );
         }
 
         // ========================================================
-        // VALIDAR DÍA Y ANTICIPACIÓN DE LA RESERVACIÓN
+        // 1.4 OBTENER FECHA ACTUAL DE LA BARBERÍA
         // ========================================================
 
-        const now = new Date();
+        const now =
+            new Date();
 
-        // Tomamos únicamente año, mes y día
-        const today = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-        );
+        const nowLocal =
+            utcToBarberLocal(
+                now,
+            );
 
-        const reservationDate = new Date(
-            start.getFullYear(),
-            start.getMonth(),
-            start.getDate(),
-        );
+        const today =
+            new Date(
+                nowLocal.getFullYear(),
+                nowLocal.getMonth(),
+                nowLocal.getDate(),
+            );
 
-        const sevenDaysFromNow = new Date(today);
-        sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+        // ========================================================
+        // 1.5 CONSTRUIR FECHA SOLICITADA
+        // ========================================================
 
-        // No permitir fechas pasadas
-        if (reservationDate < today) {
+        const [
+            reservationYear,
+            reservationMonth,
+            reservationDay,
+        ] = date
+            .split('-')
+            .map(Number);
+
+        const reservationDate =
+            new Date(
+                reservationYear,
+                reservationMonth - 1,
+                reservationDay,
+            );
+
+        if (
+            Number.isNaN(
+                reservationDate.getTime(),
+            )
+        ) {
+            throw new BadRequestException(
+                'La fecha proporcionada no es válida',
+            );
+        }
+
+        // ========================================================
+        // 1.6 NO PERMITIR FECHAS PASADAS
+        // ========================================================
+
+        if (
+            reservationDate <
+            today
+        ) {
             throw new BadRequestException(
                 'No se puede reservar en una fecha pasada',
             );
         }
 
-        // Solo hoy o mañana
-        if (reservationDate > sevenDaysFromNow) {
-            throw new BadRequestException(
-                'Solo se puede reservar con una semana de anticipación',
-            );
-        }
-
+        // ========================================================
+        // 1.7 SÁBADO CERRADO
+        //
+        // Domingo = 0
+        // ...
         // Sábado = 6
-        if (reservationDate.getDay() === 6) {
+        // ========================================================
+
+        if (
+            reservationDate.getDay() ===
+            6
+        ) {
             throw new BadRequestException(
                 'La barbería no abre los sábados',
             );
         }
+
         // ========================================================
-        // 1.4 CALCULAR HORA DE FINALIZACIÓN
+        // 1.8 CONFIGURACIÓN DEL HORARIO
         // ========================================================
-        const end = new Date(
-            start.getTime() +
-            service.durationMinutes * 60 * 1000,
-        );
+
+        const OPENING_HOUR =
+            12;
+
+        const CLOSING_HOUR =
+            20;
+
+        const PREPARATION_MINUTES =
+            5;
+
+        const OPENING_MINUTES =
+            OPENING_HOUR * 60;
+
+        const CLOSING_MINUTES =
+            CLOSING_HOUR * 60;
+
         // ========================================================
-        // 1.5 VERIFICAR QUE EL CLIENTE NO TENGA OTRA
-        //     RESERVACIÓN QUE SE CRUCE CON ESTE HORARIO
+        // 1.9 CONVERTIR HORA SOLICITADA A MINUTOS
+        //
+        // Ejemplo:
+        //
+        // 12:50
+        // =
+        // 12 * 60 + 50
+        // =
+        // 770 minutos
         // ========================================================
+
+        const [
+            requestedHour,
+            requestedMinute,
+        ] = startTime
+            .split(':')
+            .map(Number);
+
+        const requestedStartMinutes =
+            requestedHour * 60 +
+            requestedMinute;
+
+        const requestedEndMinutes =
+            requestedStartMinutes +
+            service.durationMinutes;
+
+        // ========================================================
+        // 1.10 VALIDAR HORARIO DE ATENCIÓN
+        //
+        // La cita debe comenzar después de las 12:00
+        // y terminar como máximo a las 20:00.
+        // ========================================================
+
+        if (
+            requestedStartMinutes <
+            OPENING_MINUTES ||
+            requestedEndMinutes >
+            CLOSING_MINUTES
+        ) {
+            throw new BadRequestException(
+                'El horario seleccionado está fuera del horario de atención',
+            );
+        }
+
+        // ========================================================
+        // 1.11 SI LA CITA ES HOY, NO PERMITIR UNA HORA PASADA
+        // ========================================================
+
+        const isToday =
+            reservationDate.getTime() ===
+            today.getTime();
+
+        if (
+            isToday &&
+            start.getTime() <=
+            now.getTime()
+        ) {
+            throw new BadRequestException(
+                'No se puede reservar un horario que ya pasó',
+            );
+        }
+
+        // ========================================================
+        // 1.12 GENERAR LOS SLOTS VÁLIDOS DEL SERVICIO
+        //
+        // Para Corte de 45 minutos:
+        //
+        // 12:00
+        // 12:50
+        // 13:40
+        // ...
+        //
+        // De esta manera alguien no puede mandar manualmente
+        // un horario inventado como 12:17.
+        // ========================================================
+
+        const validStartTimes: string[] =
+            [];
+
+        let currentMinutes =
+            OPENING_MINUTES;
+
+        while (
+            currentMinutes +
+            service.durationMinutes <=
+            CLOSING_MINUTES
+        ) {
+            const hours =
+                Math.floor(
+                    currentMinutes /
+                    60,
+                );
+
+            const minutes =
+                currentMinutes %
+                60;
+
+            const formattedTime =
+                `${String(hours).padStart(
+                    2,
+                    '0',
+                )}:${String(
+                    minutes,
+                ).padStart(
+                    2,
+                    '0',
+                )}`;
+
+            validStartTimes.push(
+                formattedTime,
+            );
+
+            // Duración del servicio + 5 minutos
+            // antes del siguiente cliente.
+            currentMinutes +=
+                service.durationMinutes +
+                PREPARATION_MINUTES;
+        }
+
+        // ========================================================
+        // 1.13 VALIDAR QUE SEA UN SLOT REAL
+        // ========================================================
+
+        if (
+            !validStartTimes.includes(
+                startTime,
+            )
+        ) {
+            throw new BadRequestException(
+                'El horario seleccionado no es un horario válido',
+            );
+        }
+
+        // ========================================================
+        // 1.14 CALCULAR HORA DE FINALIZACIÓN
+        // ========================================================
+
+        const end =
+            new Date(
+                start.getTime() +
+                service.durationMinutes *
+                60 *
+                1000,
+            );
+
+        // ========================================================
+        // 1.15 VERIFICAR CONFLICTO DEL CLIENTE
+        //
+        // Un cliente no puede tener dos citas simultáneamente.
+        //
+        // CANCELLED no bloquea.
+        // ========================================================
+
         const customerConflict =
             await this.prisma.reservation.findFirst({
                 where: {
                     customerId,
 
-                    // Las reservaciones canceladas ya no bloquean
                     status: {
                         not: 'CANCELLED',
                     },
 
-                    // La reservación existente empieza antes
-                    // de que termine la nueva
                     startTime: {
                         lt: end,
                     },
 
-                    // La reservación existente termina después
-                    // de que empieza la nueva
                     endTime: {
                         gt: start,
                     },
                 },
             });
 
-        if (customerConflict) {
+        if (
+            customerConflict
+        ) {
             throw new BadRequestException(
                 'El cliente ya tiene una reservación en ese horario',
             );
         }
 
         // ========================================================
-        // 1.5 OBTENER BARBEROS ACTIVOS
+        // 1.16 OBTENER BARBEROS ACTIVOS
         // ========================================================
+
         const barbers =
             await this.prisma.barber.findMany({
                 where: {
                     isActive: true,
                 },
+
                 orderBy: {
                     name: 'asc',
                 },
             });
 
-        if (barbers.length === 0) {
+        if (
+            barbers.length === 0
+        ) {
             throw new BadRequestException(
                 'No hay barberos disponibles',
             );
         }
 
         // ========================================================
-        // 1.6 BUSCAR BARBERO DISPONIBLE
+        // 1.17 BUSCAR BARBERO DISPONIBLE
         // ========================================================
-        let availableBarber: (typeof barbers)[number] | null = null;
 
-        for (const barber of barbers) {
+        let availableBarber:
+            | (typeof barbers)[number]
+            | null = null;
+
+        for (
+            const barber of barbers
+        ) {
             const conflictingReservation =
                 await this.prisma.reservation.findFirst({
                     where: {
-                        barberId: barber.id,
+                        barberId:
+                            barber.id,
 
-                        // Las canceladas no bloquean
+                        // Las canceladas
+                        // ya no bloquean.
                         status: {
                             not: 'CANCELLED',
                         },
 
-                        // La reservación existente comienza
-                        // antes de que termine la nueva
                         startTime: {
                             lt: end,
                         },
 
-                        // La reservación existente termina
-                        // después de que comienza la nueva
                         endTime: {
                             gt: start,
                         },
                     },
                 });
 
-            // Si no hay conflicto, encontramos un barbero
-            if (!conflictingReservation) {
-                availableBarber = barber;
+            if (
+                !conflictingReservation
+            ) {
+                availableBarber =
+                    barber;
+
                 break;
             }
         }
 
         // ========================================================
-        // 1.7 SI NO HAY BARBEROS DISPONIBLES
+        // 1.18 SIN BARBEROS DISPONIBLES
         // ========================================================
-        if (!availableBarber) {
+
+        if (
+            !availableBarber
+        ) {
             throw new BadRequestException(
                 'No hay barberos disponibles para ese horario',
             );
         }
 
         // ========================================================
-        // 1.8 CREAR RESERVACIÓN
+        // 1.19 CREAR RESERVACIÓN
         // ========================================================
+
         return this.prisma.reservation.create({
             data: {
                 customerId,
 
-                // El backend asigna automáticamente
-                barberId: availableBarber.id,
+                barberId:
+                    availableBarber.id,
 
                 serviceId,
-                startTime: start,
-                endTime: end,
+
+                startTime:
+                    start,
+
+                endTime:
+                    end,
             },
 
-            // ======================================================
-            // DEVOLVER INFORMACIÓN COMPLETA
-            // ======================================================
             include: {
                 customer: true,
                 barber: true,
@@ -247,42 +478,51 @@ export class ReservationsService {
     // ============================================================
     // 2. OBTENER TODAS LAS RESERVACIONES
     //
-    // También permite filtrar opcionalmente por fecha.
+    // También permite:
+    //
+    // GET /reservations?date=YYYY-MM-DD
     // ============================================================
-    async findAll(date?: string) {
-        const where: any = {};
 
-        // --------------------------------------------------------
-        // 2.1 Si se recibe una fecha, filtrar por ese día
-        // --------------------------------------------------------
+    async findAll(
+        date?: string,
+    ) {
+        const where: any =
+            {};
+
+        // ========================================================
+        // 2.1 FILTRAR POR FECHA LOCAL DE LA BARBERÍA
+        // ========================================================
+
         if (date) {
-            const startOfDay = new Date(
-                `${date}T00:00:00.000Z`,
-            );
-
-            const endOfDay = new Date(
-                `${date}T23:59:59.999Z`,
-            );
+            const {
+                startOfDay,
+                startOfNextDay,
+            } =
+                this.getLocalDayRange(
+                    date,
+                );
 
             where.startTime = {
-                gte: startOfDay,
-                lte: endOfDay,
+                gte:
+                    startOfDay,
+
+                lt:
+                    startOfNextDay,
             };
         }
 
-        // --------------------------------------------------------
-        // 2.2 Consultar reservaciones
-        // --------------------------------------------------------
+        // ========================================================
+        // 2.2 CONSULTAR RESERVACIONES
+        // ========================================================
+
         return this.prisma.reservation.findMany({
             where,
 
-            // Ordenar de la más temprana a la más tarde
             orderBy: {
-                startTime: 'asc',
+                startTime:
+                    'asc',
             },
 
-            // Incluir información del cliente,
-            // barbero y servicio
             include: {
                 customer: true,
                 barber: true,
@@ -293,40 +533,41 @@ export class ReservationsService {
 
     // ============================================================
     // 3. OBTENER RESERVACIONES POR FECHA
+    //
+    // GET /reservations/date/YYYY-MM-DD
     // ============================================================
-    async findByDate(date: string) {
-        // --------------------------------------------------------
-        // 3.1 Crear rango del día
-        // --------------------------------------------------------
-        const startOfDay = new Date(
-            `${date}T00:00:00.000Z`,
-        );
 
-        const endOfDay = new Date(
-            `${date}T23:59:59.999Z`,
-        );
+    async findByDate(
+        date: string,
+    ) {
+        const {
+            startOfDay,
+            startOfNextDay,
+        } =
+            this.getLocalDayRange(
+                date,
+            );
 
-        // --------------------------------------------------------
-        // 3.2 Buscar reservaciones dentro del rango
-        // --------------------------------------------------------
         return this.prisma.reservation.findMany({
             where: {
                 startTime: {
-                    gte: startOfDay,
-                    lte: endOfDay,
+                    gte:
+                        startOfDay,
+
+                    lt:
+                        startOfNextDay,
                 },
             },
 
-            // Incluir información relacionada
             include: {
                 customer: true,
                 barber: true,
                 service: true,
             },
 
-            // Orden cronológico
             orderBy: {
-                startTime: 'asc',
+                startTime:
+                    'asc',
             },
         });
     }
@@ -334,14 +575,17 @@ export class ReservationsService {
     // ============================================================
     // 4. CANCELAR RESERVACIÓN
     //
-    // Regla del negocio:
-    // Solo se puede cancelar con al menos 2 horas
-    // de anticipación.
+    // Solo puede cancelarse con al menos
+    // 2 horas de anticipación.
     // ============================================================
-    async cancel(id: string) {
-        // --------------------------------------------------------
-        // 4.1 Buscar la reservación
-        // --------------------------------------------------------
+
+    async cancel(
+        id: string,
+    ) {
+        // ========================================================
+        // 4.1 BUSCAR RESERVACIÓN
+        // ========================================================
+
         const reservation =
             await this.prisma.reservation.findUnique({
                 where: {
@@ -349,34 +593,46 @@ export class ReservationsService {
                 },
             });
 
-        if (!reservation) {
+        if (
+            !reservation
+        ) {
             throw new NotFoundException(
                 'La reservación no existe',
             );
         }
 
-        // --------------------------------------------------------
-        // 4.2 Verificar que no esté cancelada
-        // --------------------------------------------------------
-        if (reservation.status === 'CANCELLED') {
+        // ========================================================
+        // 4.2 YA CANCELADA
+        // ========================================================
+
+        if (
+            reservation.status ===
+            'CANCELLED'
+        ) {
             throw new BadRequestException(
                 'La reservación ya está cancelada',
             );
         }
 
-        // --------------------------------------------------------
-        // 4.3 Una reservación completada no puede cancelarse
-        // --------------------------------------------------------
-        if (reservation.status === 'COMPLETED') {
+        // ========================================================
+        // 4.3 COMPLETADA
+        // ========================================================
+
+        if (
+            reservation.status ===
+            'COMPLETED'
+        ) {
             throw new BadRequestException(
                 'No se puede cancelar una reservación completada',
             );
         }
 
-        // --------------------------------------------------------
-        // 4.4 Calcular cuánto falta para la reservación
-        // --------------------------------------------------------
-        const now = new Date();
+        // ========================================================
+        // 4.4 CALCULAR TIEMPO RESTANTE
+        // ========================================================
+
+        const now =
+            new Date();
 
         const differenceInMilliseconds =
             reservation.startTime.getTime() -
@@ -384,34 +640,50 @@ export class ReservationsService {
 
         const differenceInHours =
             differenceInMilliseconds /
-            (1000 * 60 * 60);
+            (
+                1000 *
+                60 *
+                60
+            );
 
-        // La cita ya comenzó o ya pasó
-        if (differenceInHours <= 0) {
+        // ========================================================
+        // 4.5 LA CITA YA COMENZÓ O YA PASÓ
+        // ========================================================
+
+        if (
+            differenceInHours <=
+            0
+        ) {
             throw new BadRequestException(
                 'No se puede cancelar una reservación cuya hora ya pasó',
             );
         }
 
-        // --------------------------------------------------------
-        // 4.5 Verificar regla de 2 horas
-        // --------------------------------------------------------
-        if (differenceInHours < 2) {
+        // ========================================================
+        // 4.6 REGLA DE 2 HORAS
+        // ========================================================
+
+        if (
+            differenceInHours <
+            2
+        ) {
             throw new BadRequestException(
                 'La reservación solo puede cancelarse con al menos 2 horas de anticipación',
             );
         }
 
-        // --------------------------------------------------------
-        // 4.6 Cambiar estado a CANCELLED
-        // --------------------------------------------------------
+        // ========================================================
+        // 4.7 CANCELAR
+        // ========================================================
+
         return this.prisma.reservation.update({
             where: {
                 id,
             },
 
             data: {
-                status: 'CANCELLED',
+                status:
+                    'CANCELLED',
             },
 
             include: {
@@ -425,13 +697,16 @@ export class ReservationsService {
     // ============================================================
     // 5. COMPLETAR RESERVACIÓN
     //
-    // Cambia:
     // CONFIRMED -> COMPLETED
     // ============================================================
-    async complete(id: string) {
-        // --------------------------------------------------------
-        // 5.1 Buscar la reservación
-        // --------------------------------------------------------
+
+    async complete(
+        id: string,
+    ) {
+        // ========================================================
+        // 5.1 BUSCAR RESERVACIÓN
+        // ========================================================
+
         const reservation =
             await this.prisma.reservation.findUnique({
                 where: {
@@ -439,40 +714,52 @@ export class ReservationsService {
                 },
             });
 
-        if (!reservation) {
+        if (
+            !reservation
+        ) {
             throw new NotFoundException(
                 'La reservación no existe',
             );
         }
 
-        // --------------------------------------------------------
-        // 5.2 Una reservación cancelada no puede completarse
-        // --------------------------------------------------------
-        if (reservation.status === 'CANCELLED') {
+        // ========================================================
+        // 5.2 NO COMPLETAR UNA CANCELADA
+        // ========================================================
+
+        if (
+            reservation.status ===
+            'CANCELLED'
+        ) {
             throw new BadRequestException(
                 'No se puede completar una reservación cancelada',
             );
         }
 
-        // --------------------------------------------------------
-        // 5.3 Evitar completar dos veces
-        // --------------------------------------------------------
-        if (reservation.status === 'COMPLETED') {
+        // ========================================================
+        // 5.3 EVITAR COMPLETAR DOS VECES
+        // ========================================================
+
+        if (
+            reservation.status ===
+            'COMPLETED'
+        ) {
             throw new BadRequestException(
                 'La reservación ya está completada',
             );
         }
 
-        // --------------------------------------------------------
-        // 5.4 Cambiar estado a COMPLETED
-        // --------------------------------------------------------
+        // ========================================================
+        // 5.4 ACTUALIZAR
+        // ========================================================
+
         return this.prisma.reservation.update({
             where: {
                 id,
             },
 
             data: {
-                status: 'COMPLETED',
+                status:
+                    'COMPLETED',
             },
 
             include: {
@@ -482,14 +769,34 @@ export class ReservationsService {
             },
         });
     }
-    async findByCustomerPhone(phone: string) {
-        const customer = await this.prisma.customer.findUnique({
-            where: {
-                phone,
-            },
-        });
 
-        if (!customer) {
+    // ============================================================
+    // 6. OBTENER RESERVACIONES POR TELÉFONO
+    // ============================================================
+
+    async findByCustomerPhone(
+        phone: string,
+    ) {
+        if (
+            !phone ||
+            phone.trim().length ===
+            0
+        ) {
+            throw new BadRequestException(
+                'El número de teléfono es obligatorio',
+            );
+        }
+
+        const customer =
+            await this.prisma.customer.findUnique({
+                where: {
+                    phone,
+                },
+            });
+
+        if (
+            !customer
+        ) {
             throw new NotFoundException(
                 'No se encontró ningún cliente con ese número',
             );
@@ -497,11 +804,13 @@ export class ReservationsService {
 
         return this.prisma.reservation.findMany({
             where: {
-                customerId: customer.id,
+                customerId:
+                    customer.id,
             },
 
             orderBy: {
-                startTime: 'desc',
+                startTime:
+                    'desc',
             },
 
             include: {
@@ -510,5 +819,95 @@ export class ReservationsService {
                 service: true,
             },
         });
+    }
+
+    // ============================================================
+    // 7. UTILIDAD PRIVADA:
+    //    OBTENER RANGO UTC DE UN DÍA LOCAL DE LA BARBERÍA
+    //
+    // Ejemplo:
+    //
+    // fecha solicitada:
+    // 2026-08-24
+    //
+    // obtenemos:
+    //
+    // inicio 2026-08-24 00:00 hora barbería
+    // fin    2026-08-25 00:00 hora barbería
+    //
+    // y ambos se convierten correctamente a UTC.
+    // ============================================================
+
+    private getLocalDayRange(
+        date: string,
+    ) {
+        const [
+            year,
+            month,
+            day,
+        ] = date
+            .split('-')
+            .map(Number);
+
+        const localDate =
+            new Date(
+                year,
+                month - 1,
+                day,
+            );
+
+        const nextDate =
+            new Date(
+                year,
+                month - 1,
+                day + 1,
+            );
+
+        const formatLocalDate = (
+            value: Date,
+        ) => {
+            const y =
+                value.getFullYear();
+
+            const m =
+                String(
+                    value.getMonth() +
+                    1,
+                ).padStart(
+                    2,
+                    '0',
+                );
+
+            const d =
+                String(
+                    value.getDate(),
+                ).padStart(
+                    2,
+                    '0',
+                );
+
+            return `${y}-${m}-${d}`;
+        };
+
+        const startOfDay =
+            barberLocalToUtc(
+                formatLocalDate(
+                    localDate,
+                ),
+                '00:00',
+            );
+
+        const startOfNextDay =
+            barberLocalToUtc(
+                formatLocalDate(
+                    nextDate,
+                ),
+                '00:00',
+            );
+
+        return {
+            startOfDay,
+            startOfNextDay,
+        };
     }
 }

@@ -108,6 +108,7 @@ export async function resolveCustomer(
 export async function createReservation(data: {
     customerId: string;
     serviceId: string;
+    date: string;
     startTime: string;
 }): Promise<Reservation> {
     const response = await fetch(
@@ -116,8 +117,7 @@ export async function createReservation(data: {
             method: 'POST',
 
             headers: {
-                'Content-Type':
-                    'application/json',
+                'Content-Type': 'application/json',
             },
 
             body: JSON.stringify(data),
