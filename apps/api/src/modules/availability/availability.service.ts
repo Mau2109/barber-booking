@@ -6,6 +6,11 @@ import {
 
 import { PrismaService } from '../../database/prisma.service';
 
+import {
+    barberLocalToUtc,
+    utcToBarberLocal,
+} from '../../common/date-time';
+
 @Injectable()
 export class AvailabilityService {
     constructor(
@@ -15,87 +20,128 @@ export class AvailabilityService {
     // ============================================================
     // OBTENER DISPONIBILIDAD
     // ============================================================
+
     async getAvailability(
         date: string,
         serviceId: string,
     ) {
         // ========================================================
         // 1. VALIDAR FORMATO DE FECHA
+        //
+        // Formato esperado:
+        // YYYY-MM-DD
         // ========================================================
 
-        // Esperamos YYYY-MM-DD
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        const dateRegex =
+            /^\d{4}-\d{2}-\d{2}$/;
 
-        if (!dateRegex.test(date)) {
+        if (
+            !dateRegex.test(date)
+        ) {
             throw new BadRequestException(
                 'La fecha debe tener el formato YYYY-MM-DD',
             );
         }
 
-        const requestedDate = new Date(
-            `${date}T00:00:00.000Z`,
-        );
+        // ========================================================
+        // 2. CONSTRUIR FECHA SOLICITADA
+        //
+        // Importante:
+        // No usamos Date con "Z" porque no queremos interpretar
+        // esta fecha como UTC.
+        // ========================================================
 
-        if (Number.isNaN(requestedDate.getTime())) {
+        const [
+            year,
+            month,
+            day,
+        ] = date
+            .split('-')
+            .map(Number);
+
+        const requestedDate =
+            new Date(
+                year,
+                month - 1,
+                day,
+            );
+
+        // --------------------------------------------------------
+        // Verificar que realmente sea una fecha válida.
+        //
+        // Evita casos como:
+        //
+        // 2026-02-31
+        // --------------------------------------------------------
+
+        if (
+            Number.isNaN(
+                requestedDate.getTime(),
+            ) ||
+            requestedDate.getFullYear() !==
+            year ||
+            requestedDate.getMonth() !==
+            month - 1 ||
+            requestedDate.getDate() !==
+            day
+        ) {
             throw new BadRequestException(
                 'La fecha proporcionada no es válida',
             );
         }
 
         // ========================================================
-        // 2. VALIDAR ANTICIPACIÓN
-        //
-        // Se puede reservar:
-        // - Hoy
-        // - Hasta 7 días después
+        // 3. OBTENER FECHA ACTUAL DE LA BARBERÍA
         // ========================================================
 
-        const now = new Date();
+        const now =
+            new Date();
 
-        const today = new Date(
-            Date.UTC(
-                now.getUTCFullYear(),
-                now.getUTCMonth(),
-                now.getUTCDate(),
-            ),
-        );
+        const nowLocal =
+            utcToBarberLocal(
+                now,
+            );
 
-        const maxReservationDate = new Date(today);
+        const today =
+            new Date(
+                nowLocal.getFullYear(),
+                nowLocal.getMonth(),
+                nowLocal.getDate(),
+            );
 
-        maxReservationDate.setUTCDate(
-            maxReservationDate.getUTCDate() + 7,
-        );
+        // ========================================================
+        // 4. NO PERMITIR FECHAS PASADAS
+        // ========================================================
 
-        // No permitir fechas anteriores a hoy
-        if (requestedDate < today) {
+        if (
+            requestedDate <
+            today
+        ) {
             throw new BadRequestException(
                 'No se puede consultar disponibilidad para una fecha pasada',
             );
         }
 
-        // No permitir más de 7 días
-        if (requestedDate > maxReservationDate) {
-            throw new BadRequestException(
-                'Solo se puede reservar con hasta 7 días de anticipación',
-            );
-        }
-
         // ========================================================
-        // 3. VALIDAR DÍA DE TRABAJO
+        // 5. SÁBADO CERRADO
         //
         // Domingo = 0
+        // Lunes   = 1
         // ...
-        // Sábado = 6
+        // Sábado  = 6
         // ========================================================
 
-        if (requestedDate.getUTCDay() === 6) {
+        if (
+            requestedDate.getDay() ===
+            6
+        ) {
             throw new BadRequestException(
                 'La barbería no abre los sábados',
             );
         }
 
         // ========================================================
-        // 4. OBTENER SERVICIO
+        // 6. OBTENER SERVICIO
         // ========================================================
 
         const service =
@@ -105,14 +151,17 @@ export class AvailabilityService {
                 },
             });
 
-        if (!service || !service.isActive) {
+        if (
+            !service ||
+            !service.isActive
+        ) {
             throw new NotFoundException(
                 'El servicio no existe o no está disponible',
             );
         }
 
         // ========================================================
-        // 5. OBTENER BARBEROS ACTIVOS
+        // 7. OBTENER BARBEROS ACTIVOS
         // ========================================================
 
         const barbers =
@@ -126,85 +175,167 @@ export class AvailabilityService {
                 },
             });
 
-        if (barbers.length === 0) {
+        if (
+            barbers.length === 0
+        ) {
             throw new BadRequestException(
                 'No hay barberos activos',
             );
         }
 
         // ========================================================
-        // 6. CONFIGURACIÓN DEL HORARIO
+        // 8. CONFIGURACIÓN DEL HORARIO
         // ========================================================
 
-        const OPENING_HOUR = 12;
-        const CLOSING_HOUR = 20;
+        const OPENING_HOUR =
+            12;
 
-        // Tiempo de preparación entre citas
-        const PREPARATION_MINUTES = 5;
+        const CLOSING_HOUR =
+            20;
 
-        // IMPORTANTE:
-        // Por ahora NO tenemos descanso.
-        // El horario se considera corrido de 12:00 a 20:00.
+        // Tiempo entre una cita y otra
+        const PREPARATION_MINUTES =
+            5;
 
-        // ========================================================
-        // 7. RANGO DEL DÍA
-        // ========================================================
+        const OPENING_MINUTES =
+            OPENING_HOUR * 60;
 
-        const startOfDay = new Date(
-            `${date}T00:00:00.000Z`,
-        );
-
-        const startOfNextDay = new Date(startOfDay);
-
-        startOfNextDay.setUTCDate(
-            startOfNextDay.getUTCDate() + 1,
-        );
+        const CLOSING_MINUTES =
+            CLOSING_HOUR * 60;
 
         // ========================================================
-        // 8. OBTENER RESERVACIONES ACTIVAS DEL DÍA
+        // 9. DETERMINAR SI LA FECHA CONSULTADA ES HOY
+        // ========================================================
+
+        const isToday =
+            requestedDate.getTime() ===
+            today.getTime();
+
+        // Hora actual de la barbería expresada en minutos.
+        //
+        // Ejemplo:
+        //
+        // 15:30
+        // =
+        // 15 * 60 + 30
+        // =
+        // 930 minutos
+        const currentLocalMinutes =
+            nowLocal.getHours() *
+            60 +
+            nowLocal.getMinutes();
+
+        // ========================================================
+        // 10. OBTENER RANGO UTC DEL DÍA LOCAL
+        //
+        // Ejemplo:
+        //
+        // 2026-08-24 00:00 hora barbería
+        //
+        // se convierte al instante UTC correspondiente.
+        // ========================================================
+
+        const startOfDay =
+            barberLocalToUtc(
+                date,
+                '00:00',
+            );
+
+        const nextDayDate =
+            new Date(
+                year,
+                month - 1,
+                day + 1,
+            );
+
+        const nextDayYear =
+            nextDayDate.getFullYear();
+
+        const nextDayMonth =
+            String(
+                nextDayDate.getMonth() +
+                1,
+            ).padStart(
+                2,
+                '0',
+            );
+
+        const nextDayDay =
+            String(
+                nextDayDate.getDate(),
+            ).padStart(
+                2,
+                '0',
+            );
+
+        const nextDayString =
+            `${nextDayYear}-${nextDayMonth}-${nextDayDay}`;
+
+        const startOfNextDay =
+            barberLocalToUtc(
+                nextDayString,
+                '00:00',
+            );
+
+        // ========================================================
+        // 11. OBTENER RESERVACIONES ACTIVAS DEL DÍA
+        //
+        // CANCELLED ya no ocupa horario.
         // ========================================================
 
         const reservations =
             await this.prisma.reservation.findMany({
                 where: {
                     startTime: {
-                        gte: startOfDay,
-                        lt: startOfNextDay,
+                        gte:
+                            startOfDay,
+
+                        lt:
+                            startOfNextDay,
                     },
 
-                    // Una cita cancelada ya no ocupa espacio
                     status: {
-                        not: 'CANCELLED',
+                        not:
+                            'CANCELLED',
                     },
                 },
 
                 orderBy: {
-                    startTime: 'asc',
+                    startTime:
+                        'asc',
                 },
             });
 
         // ========================================================
-        // 9. FUNCIÓN PARA FORMATEAR MINUTOS -> HH:mm
+        // 12. FUNCIÓN PARA FORMATEAR MINUTOS A HH:mm
         // ========================================================
 
         const formatTime = (
             minutes: number,
         ): string => {
             const hours =
-                Math.floor(minutes / 60);
+                Math.floor(
+                    minutes / 60,
+                );
 
             const mins =
                 minutes % 60;
 
-            return `${hours
-                .toString()
-                .padStart(2, '0')}:${mins
-                    .toString()
-                    .padStart(2, '0')}`;
+            return `${String(
+                hours,
+            ).padStart(
+                2,
+                '0',
+            )}:${String(
+                mins,
+            ).padStart(
+                2,
+                '0',
+            )}`;
         };
 
         // ========================================================
-        // 10. ESTRUCTURA DE SLOTS
+        // 13. ESTRUCTURA DE LOS SLOTS
         // ========================================================
 
         const slots: {
@@ -219,19 +350,16 @@ export class AvailabilityService {
         }[] = [];
 
         let currentMinutes =
-            OPENING_HOUR * 60;
-
-        const closingMinutes =
-            CLOSING_HOUR * 60;
+            OPENING_MINUTES;
 
         // ========================================================
-        // 11. GENERAR SLOTS
+        // 14. GENERAR SLOTS
         // ========================================================
 
         while (
             currentMinutes +
             service.durationMinutes <=
-            closingMinutes
+            CLOSING_MINUTES
         ) {
             const startMinutes =
                 currentMinutes;
@@ -241,85 +369,120 @@ export class AvailabilityService {
                 service.durationMinutes;
 
             const startFormatted =
-                formatTime(startMinutes);
+                formatTime(
+                    startMinutes,
+                );
 
             const endFormatted =
-                formatTime(endMinutes);
-
-            // ----------------------------------------------------
-            // Convertir el slot a Date para comparar
-            // con las reservaciones almacenadas.
-            // ----------------------------------------------------
-
-            const slotStart = new Date(
-                `${date}T${startFormatted}:00.000Z`,
-            );
-
-            const slotEnd = new Date(
-                `${date}T${endFormatted}:00.000Z`,
-            );
+                formatTime(
+                    endMinutes,
+                );
 
             // ====================================================
-            // 12. BUSCAR BARBEROS DISPONIBLES PARA ESTE SLOT
+            // 14.1 SI ES HOY, OMITIR HORARIOS QUE YA PASARON
+            //
+            // Por ejemplo:
+            //
+            // Hora actual = 17:20
+            // ====================================================
+
+            if (
+                isToday &&
+                startMinutes <=
+                currentLocalMinutes
+            ) {
+                currentMinutes =
+                    endMinutes +
+                    PREPARATION_MINUTES;
+
+                continue;
+            }
+
+            // ====================================================
+            // 14.2 CONVERTIR EL SLOT LOCAL A UTC
+            // ====================================================
+
+            const slotStart =
+                barberLocalToUtc(
+                    date,
+                    startFormatted,
+                );
+
+            const slotEnd =
+                barberLocalToUtc(
+                    date,
+                    endFormatted,
+                );
+
+            // ====================================================
+            // 14.3 DETERMINAR BARBEROS DISPONIBLES
             // ====================================================
 
             const availableBarbers =
-                barbers.filter((barber) => {
-                    // --------------------------------------------
-                    // Buscar si el barbero tiene una reservación
-                    // que se cruce con este intervalo.
-                    //
-                    // Conflicto:
-                    //
-                    // existingStart < slotEnd
-                    // &&
-                    // existingEnd > slotStart
-                    // --------------------------------------------
+                barbers.filter(
+                    (barber) => {
+                        // ----------------------------------------
+                        // Existe conflicto cuando:
+                        //
+                        // reservación.start < slot.end
+                        //
+                        // Y
+                        //
+                        // reservación.end > slot.start
+                        // ----------------------------------------
 
-                    const hasConflict =
-                        reservations.some(
-                            (reservation) =>
-                                reservation.barberId ===
-                                barber.id &&
-                                reservation.startTime <
-                                slotEnd &&
-                                reservation.endTime >
-                                slotStart,
-                        );
+                        const hasConflict =
+                            reservations.some(
+                                (
+                                    reservation,
+                                ) =>
+                                    reservation.barberId ===
+                                    barber.id &&
+                                    reservation.startTime <
+                                    slotEnd &&
+                                    reservation.endTime >
+                                    slotStart,
+                            );
 
-                    return !hasConflict;
-                });
+                        return !hasConflict;
+                    },
+                );
 
             // ====================================================
-            // 13. AGREGAR SLOT
+            // 14.4 AGREGAR SLOT
             // ====================================================
 
             slots.push({
-                start: startFormatted,
+                start:
+                    startFormatted,
 
-                end: endFormatted,
+                end:
+                    endFormatted,
 
-                // El horario está disponible mientras exista
-                // al menos un barbero disponible.
                 available:
-                    availableBarbers.length > 0,
+                    availableBarbers.length >
+                    0,
 
                 barbers:
                     availableBarbers.map(
-                        (barber) => ({
-                            id: barber.id,
-                            name: barber.name,
+                        (
+                            barber,
+                        ) => ({
+                            id:
+                                barber.id,
+
+                            name:
+                                barber.name,
                         }),
                     ),
             });
 
             // ====================================================
-            // 14. SIGUIENTE SLOT
+            // 14.5 AVANZAR AL SIGUIENTE SLOT
             //
-            // Ejemplo:
+            // Ejemplo Corte:
             //
-            // Corte:
-            // 12:00 - 12:45
+            // 12:00 → 12:45
             // + 5 minutos
             // siguiente = 12:50
             // ====================================================
@@ -337,8 +500,12 @@ export class AvailabilityService {
             date,
 
             service: {
-                id: service.id,
-                name: service.name,
+                id:
+                    service.id,
+
+                name:
+                    service.name,
+
                 durationMinutes:
                     service.durationMinutes,
             },
