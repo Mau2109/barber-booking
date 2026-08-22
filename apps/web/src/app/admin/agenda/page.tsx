@@ -93,10 +93,9 @@ export default function AdminAgendaPage() {
     // ============================================================
 
     const formatTime = (
-        dateString: string,
+        value: string,
     ) => {
-        const date =
-            new Date(dateString);
+        const date = new Date(value);
 
         return date.toLocaleTimeString(
             'es-MX',
@@ -104,10 +103,11 @@ export default function AdminAgendaPage() {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false,
+                timeZone:
+                    'America/Mexico_City',
             },
         );
     };
-
     // ============================================================
     // ESTADO EN ESPAÑOL
     // ============================================================

@@ -20,7 +20,8 @@ export default function ReservarPage() {
     // 1. ESTADOS GENERALES
     // ============================================================
 
-    const [services, setServices] = useState<Service[]>([]);
+    const [services, setServices] =
+        useState<Service[]>([]);
 
     const [selectedService, setSelectedService] =
         useState<Service | null>(null);
@@ -107,79 +108,62 @@ export default function ReservarPage() {
     }, []);
 
     // ============================================================
-    // 7. GENERAR FECHAS DISPONIBLES
+    // 7. OBTENER FECHA DE HOY PARA EL INPUT
     //
-    // Hoy hasta +7 días.
-    // La barbería no abre los sábados.
+    // Formato:
+    // YYYY-MM-DD
     // ============================================================
 
-    const getAvailableDates = () => {
-        const dates: Date[] = [];
+    const getTodayForInput = () => {
+        const today =
+            new Date();
 
-        const today = new Date();
+        const year =
+            today.getFullYear();
 
-        for (let i = 0; i <= 7; i++) {
-            const date =
-                new Date(today);
-
-            date.setDate(
-                today.getDate() + i,
+        const month =
+            String(
+                today.getMonth() + 1,
+            ).padStart(
+                2,
+                '0',
             );
 
-            // 6 = sábado
-            if (date.getDay() === 6) {
-                continue;
-            }
-
-            dates.push(date);
-        }
-
-        return dates;
-    };
-
-    const availableDates =
-        getAvailableDates();
-
-    // ============================================================
-    // 8. FORMATEAR FECHA PARA BACKEND
-    //
-    // Date -> YYYY-MM-DD
-    // ============================================================
-
-    const formatDateForApi = (
-        date: Date,
-    ) => {
-        const year =
-            date.getFullYear();
-
-        const month = String(
-            date.getMonth() + 1,
-        ).padStart(2, '0');
-
-        const day = String(
-            date.getDate(),
-        ).padStart(2, '0');
+        const day =
+            String(
+                today.getDate(),
+            ).padStart(
+                2,
+                '0',
+            );
 
         return `${year}-${month}-${day}`;
     };
 
+    const todayForInput =
+        getTodayForInput();
+
     // ============================================================
-    // 9. FORMATEAR FECHA PARA MOSTRAR AL USUARIO
+    // 8. FORMATEAR FECHA PARA MOSTRAR AL USUARIO
     // ============================================================
 
     const formatDateForDisplay = (
         dateString: string,
     ) => {
-        const [year, month, day] =
-            dateString
-                .split('-')
-                .map(Number);
-
-        const date = new Date(
+        const [
             year,
-            month - 1,
+            month,
             day,
-        );
+        ] = dateString
+            .split('-')
+            .map(Number);
+
+        const date =
+            new Date(
+                year,
+                month - 1,
+                day,
+            );
 
         return date.toLocaleDateString(
             'es-MX',
@@ -193,9 +177,9 @@ export default function ReservarPage() {
     };
 
     // ============================================================
-    // 10. CONSULTAR DISPONIBILIDAD
+    // 9. CONSULTAR DISPONIBILIDAD
     //
-    // Se ejecuta al cambiar:
+    // Se ejecuta automáticamente al cambiar:
     // - servicio
     // - fecha
     // ============================================================
@@ -210,10 +194,13 @@ export default function ReservarPage() {
 
         async function loadAvailability() {
             try {
-                setLoadingAvailability(true);
+                setLoadingAvailability(
+                    true,
+                );
+
                 setError(null);
 
-                // Reiniciar horario anterior
+                // Reiniciar selección anterior
                 setSelectedSlot(null);
                 setSlots([]);
 
@@ -223,13 +210,17 @@ export default function ReservarPage() {
                         selectedService!.id,
                     );
 
-                setSlots(data.slots);
+                setSlots(
+                    data.slots,
+                );
             } catch (error) {
                 setError(
                     error instanceof Error
                         ? error.message
                         : 'No se pudo consultar la disponibilidad',
                 );
+
+                setSlots([]);
             } finally {
                 setLoadingAvailability(
                     false,
@@ -244,40 +235,127 @@ export default function ReservarPage() {
     ]);
 
     // ============================================================
-    // 11. SELECCIONAR SERVICIO
+    // 10. SELECCIONAR SERVICIO
     // ============================================================
 
     const handleServiceSelect = (
         service: Service,
     ) => {
-        setSelectedService(service);
+        setSelectedService(
+            service,
+        );
 
         // Reiniciar pasos posteriores
         setSelectedDate(null);
         setSelectedSlot(null);
         setSlots([]);
 
-        setShowCustomerForm(false);
+        setShowCustomerForm(
+            false,
+        );
 
         setError(null);
     };
 
     // ============================================================
-    // 12. SELECCIONAR FECHA
+    // 11. SELECCIONAR FECHA
     // ============================================================
 
     const handleDateSelect = (
         date: string,
     ) => {
-        setSelectedDate(date);
+        setSelectedDate(
+            date,
+        );
 
         // Reiniciar horario anterior
         setSelectedSlot(null);
         setSlots([]);
 
-        setShowCustomerForm(false);
+        setShowCustomerForm(
+            false,
+        );
 
         setError(null);
+    };
+
+    // ============================================================
+    // 12. CAMBIO DEL INPUT DE FECHA
+    // ============================================================
+
+    const handleDateInputChange = (
+        value: string,
+    ) => {
+        // Si se limpia el input
+        if (!value) {
+            setSelectedDate(
+                null,
+            );
+
+            setSelectedSlot(
+                null,
+            );
+
+            setSlots([]);
+
+            setShowCustomerForm(
+                false,
+            );
+
+            setError(null);
+
+            return;
+        }
+
+        const [
+            year,
+            month,
+            day,
+        ] = value
+            .split('-')
+            .map(Number);
+
+        const selected =
+            new Date(
+                year,
+                month - 1,
+                day,
+            );
+
+        // ========================================================
+        // BLOQUEAR SÁBADOS EN EL FRONTEND
+        //
+        // Sábado = 6
+        // ========================================================
+
+        if (
+            selected.getDay() ===
+            6
+        ) {
+            setError(
+                'La barbería no abre los sábados',
+            );
+
+            setSelectedDate(
+                null,
+            );
+
+            setSelectedSlot(
+                null,
+            );
+
+            setSlots([]);
+
+            setShowCustomerForm(
+                false,
+            );
+
+            return;
+        }
+
+        handleDateSelect(
+            value,
+        );
     };
 
     // ============================================================
@@ -298,7 +376,10 @@ export default function ReservarPage() {
         }
 
         setError(null);
-        setShowCustomerForm(true);
+
+        setShowCustomerForm(
+            true,
+        );
     };
 
     // ============================================================
@@ -357,7 +438,11 @@ export default function ReservarPage() {
                 return;
             }
 
-            if (!/^\d{10}$/.test(phone)) {
+            if (
+                !/^\d{10}$/.test(
+                    phone,
+                )
+            ) {
                 setError(
                     'El teléfono debe contener 10 dígitos.',
                 );
@@ -366,7 +451,10 @@ export default function ReservarPage() {
             }
 
             try {
-                setCreatingReservation(true);
+                setCreatingReservation(
+                    true,
+                );
+
                 setError(null);
 
                 // =================================================
@@ -380,24 +468,7 @@ export default function ReservarPage() {
                     );
 
                 // =================================================
-                // 14.2 CONSTRUIR FECHA/HORA
-                //
-                // Ejemplo:
-                //
-                // 2026-08-12
-                // +
-                // 12:00
-                //
-                // =
-                //
-                // 2026-08-12T12:00:00.000Z
-                // =================================================
-
-                const startTime =
-                    `${selectedDate}T${selectedSlot.start}:00.000Z`;
-
-                // =================================================
-                // 14.3 CREAR RESERVACIÓN
+                // 14.2 CREAR RESERVACIÓN
                 //
                 // barberId NO se envía.
                 // NestJS lo asigna automáticamente.
@@ -411,11 +482,15 @@ export default function ReservarPage() {
                         serviceId:
                             selectedService.id,
 
-                        startTime,
+                        date:
+                            selectedDate,
+
+                        startTime:
+                            selectedSlot.start,
                     });
 
                 // =================================================
-                // 14.4 GUARDAR RESULTADO
+                // 14.3 GUARDAR RESULTADO
                 // =================================================
 
                 setReservation(
@@ -444,18 +519,31 @@ export default function ReservarPage() {
 
     const handleNewReservation =
         () => {
-            setReservation(null);
+            setReservation(
+                null,
+            );
 
-            setSelectedService(null);
-            setSelectedDate(null);
-            setSelectedSlot(null);
+            setSelectedService(
+                null,
+            );
+
+            setSelectedDate(
+                null,
+            );
+
+            setSelectedSlot(
+                null,
+            );
 
             setSlots([]);
 
             setCustomerName('');
+
             setCustomerPhone('');
 
-            setShowCustomerForm(false);
+            setShowCustomerForm(
+                false,
+            );
 
             setError(null);
         };
@@ -560,7 +648,8 @@ export default function ReservarPage() {
 
                                 <p className="mt-1 font-semibold">
                                     {
-                                        selectedSlot?.start
+                                        selectedSlot
+                                            ?.start
                                     }
                                 </p>
                             </div>
@@ -758,75 +847,70 @@ export default function ReservarPage() {
                                 </h2>
 
                                 <p className="mt-1 text-sm text-zinc-400">
-                                    Puedes reservar desde hoy
-                                    hasta 7 días después.
+                                    Puedes reservar desde hoy en adelante.
+                                    La barbería no abre los sábados.
                                 </p>
 
-                                <div className="mt-4 grid grid-cols-2 gap-3">
+                                <div className="mt-4">
 
-                                    {availableDates.map(
-                                        (
-                                            date,
-                                        ) => {
-                                            const value =
-                                                formatDateForApi(
-                                                    date,
-                                                );
+                                    <label
+                                        htmlFor="reservation-date"
+                                        className="mb-2 block text-sm font-medium text-zinc-300"
+                                    >
+                                        Fecha de la cita
+                                    </label>
 
-                                            const selected =
-                                                selectedDate ===
-                                                value;
-
-                                            return (
-                                                <button
-                                                    key={
-                                                        value
-                                                    }
-                                                    type="button"
-                                                    onClick={() =>
-                                                        handleDateSelect(
-                                                            value,
-                                                        )
-                                                    }
-                                                    className={`
-                                                        rounded-xl
-                                                        border
-                                                        p-4
-                                                        text-left
-                                                        transition
-                                                        ${selected
-                                                            ? 'border-white bg-zinc-800'
-                                                            : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800'
-                                                        }
-                                                    `}
-                                                >
-
-                                                    <p className="font-semibold capitalize">
-                                                        {date.toLocaleDateString(
-                                                            'es-MX',
-                                                            {
-                                                                weekday:
-                                                                    'long',
-                                                            },
-                                                        )}
-                                                    </p>
-
-                                                    <p className="mt-1 text-sm text-zinc-400">
-                                                        {date.toLocaleDateString(
-                                                            'es-MX',
-                                                            {
-                                                                day: 'numeric',
-                                                                month: 'short',
-                                                            },
-                                                        )}
-                                                    </p>
-
-                                                </button>
-                                            );
-                                        },
-                                    )}
+                                    <input
+                                        id="reservation-date"
+                                        type="date"
+                                        min={
+                                            todayForInput
+                                        }
+                                        value={
+                                            selectedDate ??
+                                            ''
+                                        }
+                                        onChange={(
+                                            event,
+                                        ) =>
+                                            handleDateInputChange(
+                                                event
+                                                    .target
+                                                    .value,
+                                            )
+                                        }
+                                        className="
+                                            w-full
+                                            rounded-xl
+                                            border
+                                            border-zinc-700
+                                            bg-zinc-900
+                                            px-4
+                                            py-3
+                                            text-white
+                                            outline-none
+                                            transition
+                                            focus:border-white
+                                        "
+                                    />
 
                                 </div>
+
+                                {selectedDate && (
+                                    <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+
+                                        <p className="text-xs uppercase text-zinc-500">
+                                            Fecha seleccionada
+                                        </p>
+
+                                        <p className="mt-1 capitalize font-medium">
+                                            {formatDateForDisplay(
+                                                selectedDate,
+                                            )}
+                                        </p>
+
+                                    </div>
+                                )}
 
                             </section>
                         )}
