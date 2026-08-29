@@ -1,69 +1,104 @@
+import Link from "next/link";
 import Image from "next/image";
+import { Button } from "@/components/ui/Button";
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+    return (
+        <main className="flex flex-1 flex-col">
+            {/* HERO con foto del local de fondo */}
+            <section className="relative flex min-h-[85vh] flex-col items-center justify-center overflow-hidden px-5 py-16 text-center sm:min-h-[90vh] sm:px-6">
+                {/* Foto de fondo */}
+                <Image
+                    src="/hero-barberia.jpeg"
+                    alt="Interior de Deluxe Barber"
+                    fill
+                    priority
+                    sizes="100vw"
+                    className="object-cover"
+                />
+
+                {/* Overlay oscuro para contraste y legibilidad */}
+                <div
+                    className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-background/40"
+                    aria-hidden="true"
+                />
+                <div
+                    className="absolute inset-0 bg-background/30"
+                    aria-hidden="true"
+                />
+
+                {/* Contenido */}
+                <div className="relative">
+                    <p className="animate-fade-up text-xs font-medium uppercase tracking-[0.15em] text-accent sm:tracking-[0.2em]">
+                        Tlaxiaco, Oaxaca
+                    </p>
+
+                    <h1
+                        className="animate-fade-up mt-5 max-w-2xl text-balance font-display text-4xl font-semibold leading-[1.1] tracking-tight text-text-primary sm:text-6xl"
+                        style={{ animationDelay: "0.05s" }}
+                    >
+                        Deluxe Barber
+                    </h1>
+
+                    <p
+                        className="animate-fade-up mx-auto mt-5 max-w-md text-balance text-base leading-relaxed text-text-muted sm:text-lg"
+                        style={{ animationDelay: "0.1s" }}
+                    >
+                        Reserva tu cita en menos de un minuto. Sin filas, sin llamadas,
+                        sin sorpresas.
+                    </p>
+
+                    <p
+                        className="animate-fade-up mt-3 flex items-center justify-center gap-1.5 text-sm text-text-subtle"
+                        style={{ animationDelay: "0.12s" }}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0" aria-hidden="true">
+                            <path
+                                d="M12 21s7-6.5 7-11.5a7 7 0 1 0-14 0C5 14.5 12 21 12 21Z"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                            />
+                            <circle cx="12" cy="9.5" r="2.3" stroke="currentColor" strokeWidth="1.6" />
+                        </svg>
+                        Chalcatongo de Hidalgo, Tlaxiaco, Oaxaca
+                    </p>
+
+                    <div
+                        className="animate-fade-up mt-9"
+                        style={{ animationDelay: "0.15s" }}
+                    >
+                        <Link href="/reservar">
+                            <Button size="lg" className="px-10">
+                                Reservar cita
+                            </Button>
+                        </Link>
+                    </div>
+                </div>
+            </section>
+
+            {/* FRANJA DE CONFIANZA */}
+            <section className="border-t border-border">
+                <div className="mx-auto grid max-w-3xl grid-cols-3 divide-x divide-border px-6 py-8 text-center">
+                    <div>
+                        <p className="font-display text-2xl font-semibold text-text-primary">
+                            +5
+                        </p>
+                        <p className="mt-1 text-xs text-text-muted">años de oficio</p>
+                    </div>
+                    <div>
+                        <p className="font-display text-2xl font-semibold text-text-primary">
+                            100%
+                        </p>
+                        <p className="mt-1 text-xs text-text-muted">a tu gusto</p>
+                    </div>
+                    <div>
+                        <p className="font-display text-2xl font-semibold text-text-primary">
+                            24/7
+                        </p>
+                        <p className="mt-1 text-xs text-text-muted">reserva online</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    );
 }
