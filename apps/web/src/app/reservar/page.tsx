@@ -15,10 +15,20 @@ import {
     Service,
 } from '@/types/booking';
 
+import { Button } from '@/components/ui/Button';
+import { ServiceCardSkeleton, TimeSlotSkeleton } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
+import { ServiceCard } from '@/components/booking/ServiceCard';
+import { DateSelector } from '@/components/booking/DateSelector';
+import { TimeSlotGrid } from '@/components/booking/TimeSlot';
+import { StepHeading } from '@/components/booking/StepHeading';
+
 export default function ReservarPage() {
     // ============================================================
     // 1. ESTADOS GENERALES
     // ============================================================
+
+    const { showToast } = useToast();
 
     const [services, setServices] =
         useState<Service[]>([]);
@@ -62,22 +72,15 @@ export default function ReservarPage() {
     const [loading, setLoading] =
         useState(true);
 
-    const [
-        loadingAvailability,
-        setLoadingAvailability,
-    ] = useState(false);
+    const [loadingAvailability, setLoadingAvailability] =
+        useState(false);
 
-    const [
-        creatingReservation,
-        setCreatingReservation,
-    ] = useState(false);
+    const [creatingReservation, setCreatingReservation] =
+        useState(false);
 
     // ============================================================
-    // 5. ERROR GENERAL
+    // 5. (el estado de error se maneja con toasts, ver useToast arriba)
     // ============================================================
-
-    const [error, setError] =
-        useState<string | null>(null);
 
     // ============================================================
     // 6. CARGAR SERVICIOS
@@ -87,17 +90,16 @@ export default function ReservarPage() {
         async function loadServices() {
             try {
                 setLoading(true);
-                setError(null);
 
-                const data =
-                    await getServices();
+                const data = await getServices();
 
                 setServices(data);
             } catch (error) {
-                setError(
+                showToast(
                     error instanceof Error
                         ? error.message
-                        : 'Ocurrió un error al cargar los servicios',
+                        : 'No se pudieron cargar los servicios. Revisa tu conexión e intenta de nuevo.',
+                    'error',
                 );
             } finally {
                 setLoading(false);
@@ -108,76 +110,23 @@ export default function ReservarPage() {
     }, []);
 
     // ============================================================
-    // 7. OBTENER FECHA DE HOY PARA EL INPUT
-    //
-    // Formato:
-    // YYYY-MM-DD
+    // 7. FORMATEAR FECHA PARA MOSTRAR AL USUARIO
     // ============================================================
 
-    const getTodayForInput = () => {
-        const today =
-            new Date();
+    const formatDateForDisplay = (dateString: string) => {
+        const [year, month, day] = dateString.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
 
-        const year =
-            today.getFullYear();
-
-        const month =
-            String(
-                today.getMonth() + 1,
-            ).padStart(
-                2,
-                '0',
-            );
-
-        const day =
-            String(
-                today.getDate(),
-            ).padStart(
-                2,
-                '0',
-            );
-
-        return `${year}-${month}-${day}`;
-    };
-
-    const todayForInput =
-        getTodayForInput();
-
-    // ============================================================
-    // 8. FORMATEAR FECHA PARA MOSTRAR AL USUARIO
-    // ============================================================
-
-    const formatDateForDisplay = (
-        dateString: string,
-    ) => {
-        const [
-            year,
-            month,
-            day,
-        ] = dateString
-            .split('-')
-            .map(Number);
-
-        const date =
-            new Date(
-                year,
-                month - 1,
-                day,
-            );
-
-        return date.toLocaleDateString(
-            'es-MX',
-            {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-            },
-        );
+        return date.toLocaleDateString('es-MX', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+        });
     };
 
     // ============================================================
-    // 9. CONSULTAR DISPONIBILIDAD
+    // 8. CONSULTAR DISPONIBILIDAD
     //
     // Se ejecuta automáticamente al cambiar:
     // - servicio
@@ -185,537 +134,273 @@ export default function ReservarPage() {
     // ============================================================
 
     useEffect(() => {
-        if (
-            !selectedService ||
-            !selectedDate
-        ) {
+        if (!selectedService || !selectedDate) {
             return;
         }
 
         async function loadAvailability() {
             try {
-                setLoadingAvailability(
-                    true,
-                );
-
-                setError(null);
+                setLoadingAvailability(true);
 
                 // Reiniciar selección anterior
                 setSelectedSlot(null);
                 setSlots([]);
 
-                const data =
-                    await getAvailability(
-                        selectedDate!,
-                        selectedService!.id,
-                    );
-
-                setSlots(
-                    data.slots,
+                const data = await getAvailability(
+                    selectedDate!,
+                    selectedService!.id,
                 );
+
+                setSlots(data.slots);
             } catch (error) {
-                setError(
+                showToast(
                     error instanceof Error
                         ? error.message
-                        : 'No se pudo consultar la disponibilidad',
+                        : 'No se pudo consultar la disponibilidad para esa fecha.',
+                    'error',
                 );
 
                 setSlots([]);
             } finally {
-                setLoadingAvailability(
-                    false,
-                );
+                setLoadingAvailability(false);
             }
         }
 
         loadAvailability();
-    }, [
-        selectedService,
-        selectedDate,
-    ]);
+    }, [selectedService, selectedDate]);
 
     // ============================================================
-    // 10. SELECCIONAR SERVICIO
+    // 9. SELECCIONAR SERVICIO
     // ============================================================
 
-    const handleServiceSelect = (
-        service: Service,
-    ) => {
-        setSelectedService(
-            service,
-        );
+    const handleServiceSelect = (service: Service) => {
+        setSelectedService(service);
 
         // Reiniciar pasos posteriores
         setSelectedDate(null);
         setSelectedSlot(null);
         setSlots([]);
-
-        setShowCustomerForm(
-            false,
-        );
-
-        setError(null);
+        setShowCustomerForm(false);
     };
 
     // ============================================================
-    // 11. SELECCIONAR FECHA
+    // 10. SELECCIONAR FECHA (bloquea sábados)
     // ============================================================
 
-    const handleDateSelect = (
-        date: string,
-    ) => {
-        setSelectedDate(
-            date,
-        );
+    const isSaturday = (date: Date) => date.getDay() === 6;
+
+    const handleDateSelect = (date: string) => {
+        const [year, month, day] = date.split('-').map(Number);
+        const parsed = new Date(year, month - 1, day);
+
+        if (isSaturday(parsed)) {
+            showToast('La barbería no abre los sábados', 'error');
+            return;
+        }
+
+        setSelectedDate(date);
 
         // Reiniciar horario anterior
         setSelectedSlot(null);
         setSlots([]);
-
-        setShowCustomerForm(
-            false,
-        );
-
-        setError(null);
+        setShowCustomerForm(false);
     };
 
     // ============================================================
-    // 12. CAMBIO DEL INPUT DE FECHA
+    // 11. SELECCIONAR HORARIO
     // ============================================================
 
-    const handleDateInputChange = (
-        value: string,
-    ) => {
-        // Si se limpia el input
-        if (!value) {
-            setSelectedDate(
-                null,
-            );
-
-            setSelectedSlot(
-                null,
-            );
-
-            setSlots([]);
-
-            setShowCustomerForm(
-                false,
-            );
-
-            setError(null);
-
-            return;
-        }
-
-        const [
-            year,
-            month,
-            day,
-        ] = value
-            .split('-')
-            .map(Number);
-
-        const selected =
-            new Date(
-                year,
-                month - 1,
-                day,
-            );
-
-        // ========================================================
-        // BLOQUEAR SÁBADOS EN EL FRONTEND
-        //
-        // Sábado = 6
-        // ========================================================
-
-        if (
-            selected.getDay() ===
-            6
-        ) {
-            setError(
-                'La barbería no abre los sábados',
-            );
-
-            setSelectedDate(
-                null,
-            );
-
-            setSelectedSlot(
-                null,
-            );
-
-            setSlots([]);
-
-            setShowCustomerForm(
-                false,
-            );
-
-            return;
-        }
-
-        handleDateSelect(
-            value,
-        );
+    const handleSlotSelect = (slot: AvailabilitySlot) => {
+        setSelectedSlot(slot);
+        setShowCustomerForm(false);
     };
 
     // ============================================================
-    // 13. MOSTRAR FORMULARIO DE CLIENTE
+    // 12. MOSTRAR FORMULARIO DE CLIENTE
     // ============================================================
 
     const handleContinue = () => {
-        if (
-            !selectedService ||
-            !selectedDate ||
-            !selectedSlot
-        ) {
-            setError(
-                'Selecciona servicio, fecha y horario.',
-            );
-
+        if (!selectedService || !selectedDate || !selectedSlot) {
+            showToast('Selecciona servicio, fecha y horario antes de continuar.', 'error');
             return;
         }
 
-        setError(null);
-
-        setShowCustomerForm(
-            true,
-        );
+        setShowCustomerForm(true);
     };
 
     // ============================================================
-    // 14. CREAR RESERVACIÓN
+    // 13. CREAR RESERVACIÓN
     // ============================================================
 
-    const handleCreateReservation =
-        async () => {
-            // ----------------------------------------------------
-            // Validar selección
-            // ----------------------------------------------------
+    const handleCreateReservation = async () => {
+        if (!selectedService || !selectedDate || !selectedSlot) {
+            showToast('Selecciona servicio, fecha y horario antes de continuar.', 'error');
+            return;
+        }
 
-            if (
-                !selectedService ||
-                !selectedDate ||
-                !selectedSlot
-            ) {
-                setError(
-                    'Selecciona servicio, fecha y horario.',
-                );
+        const name = customerName.trim();
+        const phone = customerPhone.trim();
 
-                return;
-            }
+        if (!name) {
+            showToast('Ingresa tu nombre para continuar.', 'error');
+            return;
+        }
 
-            // ----------------------------------------------------
-            // Limpiar datos
-            // ----------------------------------------------------
+        if (!phone) {
+            showToast('Ingresa tu número de teléfono.', 'error');
+            return;
+        }
 
-            const name =
-                customerName.trim();
+        if (!/^\d{10}$/.test(phone)) {
+            showToast('El teléfono debe tener 10 dígitos, sin espacios ni guiones.', 'error');
+            return;
+        }
 
-            const phone =
-                customerPhone.trim();
+        try {
+            setCreatingReservation(true);
 
-            // ----------------------------------------------------
-            // Validar nombre
-            // ----------------------------------------------------
+            // Buscar o crear cliente
+            const customer = await resolveCustomer(name, phone);
 
-            if (!name) {
-                setError(
-                    'Ingresa tu nombre.',
-                );
+            // Crear reservación
+            // barberId NO se envía. NestJS lo asigna automáticamente.
+            const createdReservation = await createReservation({
+                customerId: customer.id,
+                serviceId: selectedService.id,
+                date: selectedDate,
+                startTime: selectedSlot.start,
+            });
 
-                return;
-            }
+            setReservation(createdReservation);
+            setShowCustomerForm(false);
+            showToast('Cita confirmada', 'success');
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'No se pudo completar tu reservación. Intenta de nuevo.';
 
-            // ----------------------------------------------------
-            // Validar teléfono
-            // ----------------------------------------------------
-
-            if (!phone) {
-                setError(
-                    'Ingresa tu número de teléfono.',
-                );
-
-                return;
-            }
-
-            if (
-                !/^\d{10}$/.test(
-                    phone,
-                )
-            ) {
-                setError(
-                    'El teléfono debe contener 10 dígitos.',
-                );
-
-                return;
-            }
-
-            try {
-                setCreatingReservation(
-                    true,
-                );
-
-                setError(null);
-
-                // =================================================
-                // 14.1 BUSCAR O CREAR CLIENTE
-                // =================================================
-
-                const customer =
-                    await resolveCustomer(
-                        name,
-                        phone,
-                    );
-
-                // =================================================
-                // 14.2 CREAR RESERVACIÓN
-                //
-                // barberId NO se envía.
-                // NestJS lo asigna automáticamente.
-                // =================================================
-
-                const createdReservation =
-                    await createReservation({
-                        customerId:
-                            customer.id,
-
-                        serviceId:
-                            selectedService.id,
-
-                        date:
-                            selectedDate,
-
-                        startTime:
-                            selectedSlot.start,
-                    });
-
-                // =================================================
-                // 14.3 GUARDAR RESULTADO
-                // =================================================
-
-                setReservation(
-                    createdReservation,
-                );
-
-                setShowCustomerForm(
-                    false,
-                );
-            } catch (error) {
-                setError(
-                    error instanceof Error
-                        ? error.message
-                        : 'No se pudo completar la reservación',
-                );
-            } finally {
-                setCreatingReservation(
-                    false,
-                );
-            }
-        };
+            showToast(message, 'error');
+        } finally {
+            setCreatingReservation(false);
+        }
+    };
 
     // ============================================================
-    // 15. REINICIAR FLUJO
+    // 14. REINICIAR FLUJO
     // ============================================================
 
-    const handleNewReservation =
-        () => {
-            setReservation(
-                null,
-            );
+    const handleNewReservation = () => {
+        setReservation(null);
+        setSelectedService(null);
+        setSelectedDate(null);
+        setSelectedSlot(null);
+        setSlots([]);
+        setCustomerName('');
+        setCustomerPhone('');
+        setShowCustomerForm(false);
+    };
 
-            setSelectedService(
-                null,
-            );
-
-            setSelectedDate(
-                null,
-            );
-
-            setSelectedSlot(
-                null,
-            );
-
-            setSlots([]);
-
-            setCustomerName('');
-
-            setCustomerPhone('');
-
-            setShowCustomerForm(
-                false,
-            );
-
-            setError(null);
-        };
+    const availableSlots = slots.filter((slot) => slot.available);
 
     // ============================================================
-    // 16. CARGA INICIAL
+    // 15. CARGA INICIAL
     // ============================================================
 
     if (loading) {
         return (
-            <main className="min-h-screen bg-zinc-950 p-6 text-white">
-                <div className="mx-auto max-w-md">
-                    <p className="text-zinc-400">
-                        Cargando servicios...
-                    </p>
+            <main className="flex-1 px-4 py-10 sm:py-14">
+                <div className="mx-auto max-w-lg">
+                    <div className="h-8 w-48 animate-pulse rounded-md bg-surface-elevated" />
+                    <div className="mt-3 h-4 w-72 animate-pulse rounded-md bg-surface-elevated" />
+
+                    <div className="mt-8 space-y-3">
+                        <ServiceCardSkeleton />
+                        <ServiceCardSkeleton />
+                        <ServiceCardSkeleton />
+                    </div>
                 </div>
             </main>
         );
     }
 
     // ============================================================
-    // 17. PÁGINA
+    // 16. PÁGINA
     // ============================================================
 
     return (
-        <main className="min-h-screen bg-zinc-950 text-white">
-            <div className="mx-auto max-w-md px-4 py-8">
+        <main className="flex-1 px-4 py-10 sm:py-14">
+            <div className="mx-auto max-w-lg">
 
                 {/* =================================================
                     CONFIRMACIÓN FINAL
                 ================================================= */}
 
                 {reservation ? (
-                    <section className="rounded-2xl border border-emerald-800 bg-emerald-950/30 p-6">
+                    <section className="animate-fade-up rounded-xl border border-accent/30 bg-surface p-6 sm:p-8">
 
                         <div className="text-center">
-
-                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-2xl font-bold text-black">
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-accent text-2xl font-bold text-on-accent">
                                 ✓
                             </div>
 
-                            <h1 className="mt-5 text-3xl font-bold">
-                                ¡Cita confirmada!
+                            <h1 className="mt-5 font-display text-2xl font-semibold text-text-primary sm:text-3xl">
+                                Cita confirmada
                             </h1>
 
-                            <p className="mt-2 text-sm text-zinc-300">
+                            <p className="mt-2 text-sm text-text-muted">
                                 Tu reservación fue registrada correctamente.
                             </p>
-
                         </div>
 
                         {/* DATOS DE LA RESERVACIÓN */}
 
-                        <div className="mt-8 space-y-4 rounded-xl bg-zinc-950/60 p-5">
+                        <div className="mt-8 divide-y divide-border rounded-lg bg-background/60 px-5">
+                            {[
+                                { label: 'Cliente', value: reservation.customer.name },
+                                { label: 'Servicio', value: reservation.service.name },
+                                {
+                                    label: 'Fecha',
+                                    value: selectedDate ? formatDateForDisplay(selectedDate) : '',
+                                    capitalize: true,
+                                },
+                                { label: 'Hora', value: selectedSlot?.start, mono: true },
+                                { label: 'Barbero asignado', value: reservation.barber.name },
+                                {
+                                    label: 'Precio',
+                                    value: `$${reservation.service.price}`,
+                                    mono: true,
+                                },
+                            ].map((row) => (
+                                <div key={row.label} className="flex items-center justify-between py-3.5">
+                                    <span className="text-xs uppercase tracking-wide text-text-subtle">
+                                        {row.label}
+                                    </span>
+                                    <span
+                                        className={`text-sm font-medium text-text-primary ${row.capitalize ? 'capitalize' : ''} ${row.mono ? 'font-mono' : ''}`}
+                                    >
+                                        {row.value}
+                                    </span>
+                                </div>
+                            ))}
 
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Cliente
-                                </p>
-
-                                <p className="mt-1 font-semibold">
-                                    {
-                                        reservation
-                                            .customer
-                                            .name
-                                    }
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Servicio
-                                </p>
-
-                                <p className="mt-1 font-semibold">
-                                    {
-                                        reservation
-                                            .service
-                                            .name
-                                    }
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Fecha
-                                </p>
-
-                                <p className="mt-1 capitalize">
-                                    {selectedDate
-                                        ? formatDateForDisplay(
-                                            selectedDate,
-                                        )
-                                        : ''}
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Hora
-                                </p>
-
-                                <p className="mt-1 font-semibold">
-                                    {
-                                        selectedSlot
-                                            ?.start
-                                    }
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Barbero asignado
-                                </p>
-
-                                <p className="mt-1">
-                                    {
-                                        reservation
-                                            .barber
-                                            .name
-                                    }
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
-                                    Precio
-                                </p>
-
-                                <p className="mt-1 font-semibold">
-                                    $
-                                    {
-                                        reservation
-                                            .service
-                                            .price
-                                    }
-                                </p>
-                            </div>
-
-                            <div>
-                                <p className="text-xs uppercase text-zinc-500">
+                            <div className="flex items-center justify-between py-3.5">
+                                <span className="text-xs uppercase tracking-wide text-text-subtle">
                                     Estado
-                                </p>
-
-                                <p className="mt-1 font-semibold text-emerald-400">
+                                </span>
+                                <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-xs font-medium text-accent">
                                     Confirmada
-                                </p>
+                                </span>
                             </div>
-
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={
-                                handleNewReservation
-                            }
-                            className="
-                                mt-8
-                                w-full
-                                rounded-xl
-                                bg-white
-                                px-4
-                                py-4
-                                font-semibold
-                                text-black
-                                transition
-                                hover:bg-zinc-200
-                            "
+                        <Button
+                            fullWidth
+                            onClick={handleNewReservation}
+                            className="mt-8"
                         >
                             Hacer otra reservación
-                        </button>
-
+                        </Button>
                     </section>
                 ) : (
                     <>
@@ -723,116 +408,31 @@ export default function ReservarPage() {
                             ENCABEZADO
                         ================================================= */}
 
-                        <h1 className="text-3xl font-bold">
+                        <h1 className="font-display text-2xl font-semibold text-text-primary sm:text-3xl">
                             Reserva tu cita
                         </h1>
 
-                        <p className="mt-2 text-zinc-400">
-                            Selecciona el servicio,
-                            la fecha y el horario
-                            que prefieras.
+                        <p className="mt-2 text-sm text-text-muted sm:text-base">
+                            Selecciona el servicio, la fecha y el horario que prefieras.
                         </p>
-
-                        {/* =================================================
-                            ERROR GENERAL
-                        ================================================= */}
-
-                        {error && (
-                            <div className="mt-6 rounded-xl border border-red-900 bg-red-950/40 p-4">
-                                <p className="text-sm text-red-300">
-                                    {error}
-                                </p>
-                            </div>
-                        )}
 
                         {/* =================================================
                             PASO 1 - SERVICIO
                         ================================================= */}
 
-                        <section className="mt-8">
+                        <section className="mt-9">
+                            <StepHeading step={1} title="Selecciona un servicio" />
 
-                            <h2 className="text-xl font-semibold">
-                                1. Selecciona un servicio
-                            </h2>
-
-                            <div className="mt-4 space-y-4">
-
-                                {services.map(
-                                    (
-                                        service,
-                                    ) => {
-                                        const selected =
-                                            selectedService?.id ===
-                                            service.id;
-
-                                        return (
-                                            <button
-                                                key={
-                                                    service.id
-                                                }
-                                                type="button"
-                                                onClick={() =>
-                                                    handleServiceSelect(
-                                                        service,
-                                                    )
-                                                }
-                                                className={`
-                                                    w-full
-                                                    rounded-xl
-                                                    border
-                                                    p-5
-                                                    text-left
-                                                    transition
-                                                    ${selected
-                                                        ? 'border-white bg-zinc-800'
-                                                        : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800'
-                                                    }
-                                                `}
-                                            >
-
-                                                <div className="flex items-start justify-between gap-4">
-
-                                                    <div>
-
-                                                        <h3 className="text-lg font-semibold">
-                                                            {
-                                                                service.name
-                                                            }
-                                                        </h3>
-
-                                                        {service.description && (
-                                                            <p className="mt-1 text-sm text-zinc-400">
-                                                                {
-                                                                    service.description
-                                                                }
-                                                            </p>
-                                                        )}
-
-                                                        <p className="mt-3 text-sm text-zinc-300">
-                                                            {
-                                                                service.durationMinutes
-                                                            }{' '}
-                                                            minutos
-                                                        </p>
-
-                                                    </div>
-
-                                                    <span className="font-semibold">
-                                                        $
-                                                        {
-                                                            service.price
-                                                        }
-                                                    </span>
-
-                                                </div>
-
-                                            </button>
-                                        );
-                                    },
-                                )}
-
+                            <div className="mt-4 space-y-3">
+                                {services.map((service) => (
+                                    <ServiceCard
+                                        key={service.id}
+                                        service={service}
+                                        selected={selectedService?.id === service.id}
+                                        onSelect={handleServiceSelect}
+                                    />
+                                ))}
                             </div>
-
                         </section>
 
                         {/* =================================================
@@ -840,78 +440,31 @@ export default function ReservarPage() {
                         ================================================= */}
 
                         {selectedService && (
-                            <section className="mt-10">
-
-                                <h2 className="text-xl font-semibold">
-                                    2. Selecciona una fecha
-                                </h2>
-
-                                <p className="mt-1 text-sm text-zinc-400">
-                                    Puedes reservar desde hoy en adelante.
-                                    La barbería no abre los sábados.
-                                </p>
+                            <section className="animate-fade-up mt-9">
+                                <StepHeading
+                                    step={2}
+                                    title="Selecciona una fecha"
+                                    description="Puedes reservar desde hoy en adelante. La barbería no abre los sábados."
+                                />
 
                                 <div className="mt-4">
-
-                                    <label
-                                        htmlFor="reservation-date"
-                                        className="mb-2 block text-sm font-medium text-zinc-300"
-                                    >
-                                        Fecha de la cita
-                                    </label>
-
-                                    <input
-                                        id="reservation-date"
-                                        type="date"
-                                        min={
-                                            todayForInput
-                                        }
-                                        value={
-                                            selectedDate ??
-                                            ''
-                                        }
-                                        onChange={(
-                                            event,
-                                        ) =>
-                                            handleDateInputChange(
-                                                event
-                                                    .target
-                                                    .value,
-                                            )
-                                        }
-                                        className="
-                                            w-full
-                                            rounded-xl
-                                            border
-                                            border-zinc-700
-                                            bg-zinc-900
-                                            px-4
-                                            py-3
-                                            text-white
-                                            outline-none
-                                            transition
-                                            focus:border-white
-                                        "
+                                    <DateSelector
+                                        selectedDate={selectedDate}
+                                        onSelect={handleDateSelect}
+                                        isDateDisabled={isSaturday}
                                     />
-
                                 </div>
 
                                 {selectedDate && (
-                                    <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-
-                                        <p className="text-xs uppercase text-zinc-500">
+                                    <div className="mt-3 rounded-lg border border-border bg-surface p-4">
+                                        <p className="text-xs uppercase tracking-wide text-text-subtle">
                                             Fecha seleccionada
                                         </p>
-
-                                        <p className="mt-1 capitalize font-medium">
-                                            {formatDateForDisplay(
-                                                selectedDate,
-                                            )}
+                                        <p className="mt-1 font-medium capitalize text-text-primary">
+                                            {formatDateForDisplay(selectedDate)}
                                         </p>
-
                                     </div>
                                 )}
-
                             </section>
                         )}
 
@@ -919,111 +472,27 @@ export default function ReservarPage() {
                             PASO 3 - HORARIO
                         ================================================= */}
 
-                        {selectedService &&
-                            selectedDate && (
-                                <section className="mt-10">
+                        {selectedService && selectedDate && (
+                            <section className="animate-fade-up mt-9">
+                                <StepHeading
+                                    step={3}
+                                    title="Selecciona un horario"
+                                    description="Solo se muestran horarios disponibles."
+                                />
 
-                                    <h2 className="text-xl font-semibold">
-                                        3. Selecciona un horario
-                                    </h2>
-
-                                    <p className="mt-1 text-sm text-zinc-400">
-                                        Solo se muestran
-                                        horarios disponibles.
-                                    </p>
-
-                                    {/* CARGANDO */}
-
-                                    {loadingAvailability && (
-                                        <p className="mt-4 text-zinc-400">
-                                            Consultando horarios...
-                                        </p>
+                                <div className="mt-4">
+                                    {loadingAvailability ? (
+                                        <TimeSlotSkeleton />
+                                    ) : (
+                                        <TimeSlotGrid
+                                            slots={availableSlots}
+                                            selectedSlot={selectedSlot}
+                                            onSelect={handleSlotSelect}
+                                        />
                                     )}
-
-                                    {/* HORARIOS */}
-
-                                    {!loadingAvailability && (
-                                        <>
-                                            {slots.filter(
-                                                (
-                                                    slot,
-                                                ) =>
-                                                    slot.available,
-                                            ).length >
-                                                0 ? (
-                                                <div className="mt-4 grid grid-cols-3 gap-3">
-
-                                                    {slots
-                                                        .filter(
-                                                            (
-                                                                slot,
-                                                            ) =>
-                                                                slot.available,
-                                                        )
-                                                        .map(
-                                                            (
-                                                                slot,
-                                                            ) => {
-                                                                const selected =
-                                                                    selectedSlot?.start ===
-                                                                    slot.start;
-
-                                                                return (
-                                                                    <button
-                                                                        key={
-                                                                            slot.start
-                                                                        }
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            setSelectedSlot(
-                                                                                slot,
-                                                                            );
-
-                                                                            setShowCustomerForm(
-                                                                                false,
-                                                                            );
-
-                                                                            setError(
-                                                                                null,
-                                                                            );
-                                                                        }}
-                                                                        className={`
-                                                                            rounded-xl
-                                                                            border
-                                                                            px-3
-                                                                            py-3
-                                                                            text-sm
-                                                                            font-semibold
-                                                                            transition
-                                                                            ${selected
-                                                                                ? 'border-white bg-white text-black'
-                                                                                : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800'
-                                                                            }
-                                                                        `}
-                                                                    >
-                                                                        {
-                                                                            slot.start
-                                                                        }
-                                                                    </button>
-                                                                );
-                                                            },
-                                                        )}
-
-                                                </div>
-                                            ) : (
-                                                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-
-                                                    <p className="text-sm text-zinc-400">
-                                                        No hay horarios disponibles para esta fecha.
-                                                    </p>
-
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-
-                                </section>
-                            )}
+                                </div>
+                            </section>
+                        )}
 
                         {/* =================================================
                             PASO 4 - RESUMEN
@@ -1033,91 +502,41 @@ export default function ReservarPage() {
                             selectedDate &&
                             selectedSlot &&
                             !showCustomerForm && (
-                                <section className="mt-10 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-
-                                    <h2 className="text-lg font-semibold">
+                                <section className="animate-fade-up mt-9 rounded-xl border border-border bg-surface p-5">
+                                    <h2 className="font-display text-base font-semibold text-text-primary">
                                         Tu selección
                                     </h2>
 
                                     <div className="mt-4 space-y-2 text-sm">
-
                                         <p>
-                                            <span className="text-zinc-400">
-                                                Servicio:{' '}
-                                            </span>
-
-                                            {
-                                                selectedService.name
-                                            }
+                                            <span className="text-text-muted">Servicio: </span>
+                                            <span className="text-text-primary">{selectedService.name}</span>
                                         </p>
-
                                         <p>
-                                            <span className="text-zinc-400">
-                                                Fecha:{' '}
-                                            </span>
-
-                                            <span className="capitalize">
-                                                {formatDateForDisplay(
-                                                    selectedDate,
-                                                )}
+                                            <span className="text-text-muted">Fecha: </span>
+                                            <span className="capitalize text-text-primary">
+                                                {formatDateForDisplay(selectedDate)}
                                             </span>
                                         </p>
-
                                         <p>
-                                            <span className="text-zinc-400">
-                                                Hora:{' '}
-                                            </span>
-
-                                            {
-                                                selectedSlot.start
-                                            }
+                                            <span className="text-text-muted">Hora: </span>
+                                            <span className="font-mono text-text-primary">{selectedSlot.start}</span>
                                         </p>
-
                                         <p>
-                                            <span className="text-zinc-400">
-                                                Duración:{' '}
+                                            <span className="text-text-muted">Duración: </span>
+                                            <span className="text-text-primary">
+                                                {selectedService.durationMinutes} minutos
                                             </span>
-
-                                            {
-                                                selectedService.durationMinutes
-                                            }{' '}
-                                            minutos
                                         </p>
-
                                         <p>
-                                            <span className="text-zinc-400">
-                                                Precio:{' '}
-                                            </span>
-
-                                            $
-                                            {
-                                                selectedService.price
-                                            }
+                                            <span className="text-text-muted">Precio: </span>
+                                            <span className="font-mono text-text-primary">${selectedService.price}</span>
                                         </p>
-
                                     </div>
 
-                                    <button
-                                        type="button"
-                                        onClick={
-                                            handleContinue
-                                        }
-                                        className="
-                                            mt-6
-                                            w-full
-                                            rounded-xl
-                                            bg-white
-                                            px-4
-                                            py-4
-                                            font-semibold
-                                            text-black
-                                            transition
-                                            hover:bg-zinc-200
-                                        "
-                                    >
+                                    <Button fullWidth onClick={handleContinue} className="mt-6">
                                         Continuar
-                                    </button>
-
+                                    </Button>
                                 </section>
                             )}
 
@@ -1129,212 +548,101 @@ export default function ReservarPage() {
                             selectedService &&
                             selectedDate &&
                             selectedSlot && (
-                                <section className="mt-10 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-
-                                    <h2 className="text-xl font-semibold">
-                                        4. Tus datos
-                                    </h2>
-
-                                    <p className="mt-1 text-sm text-zinc-400">
-                                        Ingresa tus datos para
-                                        confirmar la cita.
-                                    </p>
+                                <section className="animate-fade-up mt-9 rounded-xl border border-border bg-surface p-5">
+                                    <StepHeading step={4} title="Tus datos" description="Ingresa tus datos para confirmar la cita." />
 
                                     {/* NOMBRE */}
-
                                     <div className="mt-6">
-
                                         <label
                                             htmlFor="name"
-                                            className="mb-2 block text-sm font-medium"
+                                            className="mb-2 block text-sm font-medium text-text-primary"
                                         >
                                             Nombre
                                         </label>
-
                                         <input
                                             id="name"
                                             type="text"
-                                            value={
-                                                customerName
-                                            }
-                                            onChange={(
-                                                event,
-                                            ) =>
-                                                setCustomerName(
-                                                    event
-                                                        .target
-                                                        .value,
-                                                )
-                                            }
+                                            value={customerName}
+                                            onChange={(event) => setCustomerName(event.target.value)}
                                             placeholder="Tu nombre"
                                             autoComplete="name"
                                             className="
-                                                w-full
-                                                rounded-xl
-                                                border
-                                                border-zinc-700
-                                                bg-zinc-950
-                                                px-4
-                                                py-3
-                                                text-white
-                                                outline-none
-                                                transition
-                                                placeholder:text-zinc-600
-                                                focus:border-white
+                                                w-full rounded-lg border border-border-strong bg-background
+                                                px-4 py-3 text-text-primary outline-none transition-colors
+                                                placeholder:text-text-subtle
+                                                focus:border-accent
                                             "
                                         />
-
                                     </div>
 
                                     {/* TELÉFONO */}
-
                                     <div className="mt-4">
-
                                         <label
                                             htmlFor="phone"
-                                            className="mb-2 block text-sm font-medium"
+                                            className="mb-2 block text-sm font-medium text-text-primary"
                                         >
                                             Teléfono
                                         </label>
-
                                         <input
                                             id="phone"
                                             type="tel"
                                             inputMode="numeric"
-                                            maxLength={
-                                                10
-                                            }
-                                            value={
-                                                customerPhone
-                                            }
-                                            onChange={(
-                                                event,
-                                            ) => {
-                                                const value =
-                                                    event.target.value.replace(
-                                                        /\D/g,
-                                                        '',
-                                                    );
-
-                                                setCustomerPhone(
-                                                    value,
-                                                );
+                                            maxLength={10}
+                                            value={customerPhone}
+                                            onChange={(event) => {
+                                                const value = event.target.value.replace(/\D/g, '');
+                                                setCustomerPhone(value);
                                             }}
                                             placeholder="9511234567"
                                             autoComplete="tel"
                                             className="
-                                                w-full
-                                                rounded-xl
-                                                border
-                                                border-zinc-700
-                                                bg-zinc-950
-                                                px-4
-                                                py-3
-                                                text-white
-                                                outline-none
-                                                transition
-                                                placeholder:text-zinc-600
-                                                focus:border-white
+                                                w-full rounded-lg border border-border-strong bg-background
+                                                px-4 py-3 text-text-primary outline-none transition-colors
+                                                placeholder:text-text-subtle
+                                                focus:border-accent
                                             "
                                         />
-
-                                        <p className="mt-2 text-xs text-zinc-500">
+                                        <p className="mt-2 text-xs text-text-subtle">
                                             Ingresa 10 dígitos.
                                         </p>
-
                                     </div>
 
                                     {/* RESUMEN PEQUEÑO */}
-
-                                    <div className="mt-6 rounded-xl bg-zinc-950 p-4 text-sm">
-
-                                        <p>
-                                            {
-                                                selectedService.name
-                                            }
+                                    <div className="mt-6 rounded-lg bg-background/60 p-4 text-sm">
+                                        <p className="text-text-primary">
+                                            {selectedService.name}
                                             {' · '}
-                                            {
-                                                selectedSlot.start
-                                            }
+                                            <span className="font-mono">{selectedSlot.start}</span>
                                         </p>
-
-                                        <p className="mt-1 capitalize text-zinc-400">
-                                            {formatDateForDisplay(
-                                                selectedDate,
-                                            )}
+                                        <p className="mt-1 capitalize text-text-muted">
+                                            {formatDateForDisplay(selectedDate)}
                                         </p>
-
                                     </div>
 
                                     {/* CONFIRMAR */}
-
-                                    <button
-                                        type="button"
-                                        disabled={
-                                            creatingReservation
-                                        }
-                                        onClick={
-                                            handleCreateReservation
-                                        }
-                                        className="
-                                            mt-6
-                                            w-full
-                                            rounded-xl
-                                            bg-white
-                                            px-4
-                                            py-4
-                                            font-semibold
-                                            text-black
-                                            transition
-                                            hover:bg-zinc-200
-                                            disabled:cursor-not-allowed
-                                            disabled:opacity-50
-                                        "
+                                    <Button
+                                        fullWidth
+                                        loading={creatingReservation}
+                                        onClick={handleCreateReservation}
+                                        className="mt-6"
                                     >
-                                        {creatingReservation
-                                            ? 'Reservando...'
-                                            : 'Confirmar reservación'}
-                                    </button>
+                                        {creatingReservation ? 'Reservando...' : 'Confirmar reservación'}
+                                    </Button>
 
                                     {/* REGRESAR */}
-
-                                    <button
-                                        type="button"
-                                        disabled={
-                                            creatingReservation
-                                        }
-                                        onClick={() => {
-                                            setShowCustomerForm(
-                                                false,
-                                            );
-
-                                            setError(
-                                                null,
-                                            );
-                                        }}
-                                        className="
-                                            mt-3
-                                            w-full
-                                            rounded-xl
-                                            border
-                                            border-zinc-700
-                                            px-4
-                                            py-3
-                                            text-sm
-                                            font-medium
-                                            transition
-                                            hover:bg-zinc-800
-                                            disabled:opacity-50
-                                        "
+                                    <Button
+                                        variant="ghost"
+                                        fullWidth
+                                        disabled={creatingReservation}
+                                        onClick={() => setShowCustomerForm(false)}
+                                        className="mt-2"
                                     >
                                         Regresar
-                                    </button>
-
+                                    </Button>
                                 </section>
                             )}
                     </>
                 )}
-
             </div>
         </main>
     );

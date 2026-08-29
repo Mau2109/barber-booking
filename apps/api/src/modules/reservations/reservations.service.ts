@@ -72,7 +72,7 @@ export class ReservationsService {
         }
 
         // ========================================================
-        // 1.3 CONVERTIR FECHA/HORA LOCAL A UTC
+        // 1.3 CONVERTIR FECHA/HORA LOCAL DE LA BARBERÍA A UTC
         // ========================================================
 
         const start =
@@ -92,7 +92,7 @@ export class ReservationsService {
         }
 
         // ========================================================
-        // 1.4 OBTENER FECHA ACTUAL DE LA BARBERÍA
+        // 1.4 OBTENER FECHA ACTUAL EN LA ZONA DE LA BARBERÍA
         // ========================================================
 
         const now =
@@ -132,7 +132,13 @@ export class ReservationsService {
         if (
             Number.isNaN(
                 reservationDate.getTime(),
-            )
+            ) ||
+            reservationDate.getFullYear() !==
+            reservationYear ||
+            reservationDate.getMonth() !==
+            reservationMonth - 1 ||
+            reservationDate.getDate() !==
+            reservationDay
         ) {
             throw new BadRequestException(
                 'La fecha proporcionada no es válida',
@@ -156,8 +162,7 @@ export class ReservationsService {
         // 1.7 SÁBADO CERRADO
         //
         // Domingo = 0
-        // ...
-        // Sábado = 6
+        // Sábado  = 6
         // ========================================================
 
         if (
@@ -194,10 +199,8 @@ export class ReservationsService {
         // Ejemplo:
         //
         // 12:50
-        // =
-        // 12 * 60 + 50
-        // =
-        // 770 minutos
+        // = 12 * 60 + 50
+        // = 770 minutos
         // ========================================================
 
         const [
@@ -217,9 +220,6 @@ export class ReservationsService {
 
         // ========================================================
         // 1.10 VALIDAR HORARIO DE ATENCIÓN
-        //
-        // La cita debe comenzar después de las 12:00
-        // y terminar como máximo a las 20:00.
         // ========================================================
 
         if (
@@ -234,7 +234,7 @@ export class ReservationsService {
         }
 
         // ========================================================
-        // 1.11 SI LA CITA ES HOY, NO PERMITIR UNA HORA PASADA
+        // 1.11 SI LA CITA ES HOY, NO PERMITIR HORARIOS PASADOS
         // ========================================================
 
         const isToday =
@@ -252,21 +252,20 @@ export class ReservationsService {
         }
 
         // ========================================================
-        // 1.12 GENERAR LOS SLOTS VÁLIDOS DEL SERVICIO
+        // 1.12 GENERAR SLOTS VÁLIDOS DEL SERVICIO
         //
-        // Para Corte de 45 minutos:
+        // Ejemplo Corte 45 min + buffer 5 min:
         //
         // 12:00
         // 12:50
         // 13:40
         // ...
         //
-        // De esta manera alguien no puede mandar manualmente
-        // un horario inventado como 12:17.
+        // Evita horarios inventados como 12:17.
         // ========================================================
 
-        const validStartTimes: string[] =
-            [];
+        const validStartTimes:
+            string[] = [];
 
         let currentMinutes =
             OPENING_MINUTES;
@@ -287,7 +286,9 @@ export class ReservationsService {
                 60;
 
             const formattedTime =
-                `${String(hours).padStart(
+                `${String(
+                    hours,
+                ).padStart(
                     2,
                     '0',
                 )}:${String(
@@ -301,8 +302,6 @@ export class ReservationsService {
                 formattedTime,
             );
 
-            // Duración del servicio + 5 minutos
-            // antes del siguiente cliente.
             currentMinutes +=
                 service.durationMinutes +
                 PREPARATION_MINUTES;
@@ -335,151 +334,281 @@ export class ReservationsService {
             );
 
         // ========================================================
-        // 1.15 VERIFICAR CONFLICTO DEL CLIENTE
+        // 1.15 CALCULAR BUFFER DE PREPARACIÓN
         //
-        // Un cliente no puede tener dos citas simultáneamente.
+        // Ejemplo:
         //
-        // CANCELLED no bloquea.
+        // Cita anterior:
+        // 12:00 - 12:45
+        //
+        // Buffer:
+        // 12:45 - 12:50
+        //
+        // Una nueva cita a las 12:50 sí es válida.
         // ========================================================
 
-        const customerConflict =
-            await this.prisma.reservation.findFirst({
-                where: {
-                    customerId,
-
-                    status: {
-                        not: 'CANCELLED',
-                    },
-
-                    startTime: {
-                        lt: end,
-                    },
-
-                    endTime: {
-                        gt: start,
-                    },
-                },
-            });
-
-        if (
-            customerConflict
-        ) {
-            throw new BadRequestException(
-                'El cliente ya tiene una reservación en ese horario',
+        const startWithPreparation =
+            new Date(
+                start.getTime() -
+                PREPARATION_MINUTES *
+                60 *
+                1000,
             );
-        }
 
         // ========================================================
-        // 1.16 OBTENER BARBEROS ACTIVOS
+        // 1.16 CREAR RESERVACIÓN EN TRANSACCIÓN SERIALIZABLE
+        //
+        // Esto protege contra condiciones de carrera:
+        //
+        // Cliente A consulta un barbero libre
+        // Cliente B consulta el mismo barbero
+        // Ambos intentan reservar al mismo tiempo
+        //
+        // PostgreSQL/Prisma detectará el conflicto y uno de los
+        // procesos volverá a intentarlo.
         // ========================================================
 
-        const barbers =
-            await this.prisma.barber.findMany({
-                where: {
-                    isActive: true,
-                },
-
-                orderBy: {
-                    name: 'asc',
-                },
-            });
-
-        if (
-            barbers.length === 0
-        ) {
-            throw new BadRequestException(
-                'No hay barberos disponibles',
-            );
-        }
-
-        // ========================================================
-        // 1.17 BUSCAR BARBERO DISPONIBLE
-        // ========================================================
-
-        let availableBarber:
-            | (typeof barbers)[number]
-            | null = null;
+        const MAX_RETRIES =
+            3;
 
         for (
-            const barber of barbers
+            let attempt = 1;
+            attempt <= MAX_RETRIES;
+            attempt++
         ) {
-            const conflictingReservation =
-                await this.prisma.reservation.findFirst({
-                    where: {
-                        barberId:
-                            barber.id,
+            try {
+                return await this.prisma.$transaction(
+                    async (tx) => {
+                        // ========================================
+                        // 1.16.1 VERIFICAR CONFLICTO DEL CLIENTE
+                        // ========================================
 
-                        // Las canceladas
-                        // ya no bloquean.
-                        status: {
-                            not: 'CANCELLED',
-                        },
+                        const customerConflict =
+                            await tx.reservation.findFirst({
+                                where: {
+                                    customerId,
 
-                        startTime: {
-                            lt: end,
-                        },
+                                    status: {
+                                        not:
+                                            'CANCELLED',
+                                    },
 
-                        endTime: {
-                            gt: start,
-                        },
+                                    startTime: {
+                                        lt:
+                                            end,
+                                    },
+
+                                    endTime: {
+                                        gt:
+                                            startWithPreparation,
+                                    },
+                                },
+                            });
+
+                        if (
+                            customerConflict
+                        ) {
+                            throw new BadRequestException(
+                                'El cliente ya tiene una reservación en ese horario',
+                            );
+                        }
+
+                        // ========================================
+                        // 1.16.2 OBTENER BARBEROS ACTIVOS
+                        // ========================================
+
+                        const barbers =
+                            await tx.barber.findMany({
+                                where: {
+                                    isActive:
+                                        true,
+                                },
+
+                                orderBy: {
+                                    name:
+                                        'asc',
+                                },
+                            });
+
+                        if (
+                            barbers.length ===
+                            0
+                        ) {
+                            throw new BadRequestException(
+                                'No hay barberos disponibles',
+                            );
+                        }
+
+                        // ========================================
+                        // 1.16.3 BUSCAR BARBERO DISPONIBLE
+                        // ========================================
+
+                        let availableBarber:
+                            | (typeof barbers)[number]
+                            | null =
+                            null;
+
+                        for (
+                            const barber of
+                            barbers
+                        ) {
+                            const conflictingReservation =
+                                await tx.reservation.findFirst(
+                                    {
+                                        where: {
+                                            barberId:
+                                                barber.id,
+
+                                            status: {
+                                                not:
+                                                    'CANCELLED',
+                                            },
+
+                                            startTime:
+                                            {
+                                                lt:
+                                                    end,
+                                            },
+
+                                            endTime:
+                                            {
+                                                gt:
+                                                    startWithPreparation,
+                                            },
+                                        },
+                                    },
+                                );
+
+                            if (
+                                !conflictingReservation
+                            ) {
+                                availableBarber =
+                                    barber;
+
+                                break;
+                            }
+                        }
+
+                        // ========================================
+                        // 1.16.4 SIN BARBEROS DISPONIBLES
+                        // ========================================
+
+                        if (
+                            !availableBarber
+                        ) {
+                            throw new BadRequestException(
+                                'No hay barberos disponibles para ese horario',
+                            );
+                        }
+
+                        // ========================================
+                        // 1.16.5 CREAR RESERVACIÓN
+                        // ========================================
+
+                        return tx.reservation.create({
+                            data: {
+                                customerId,
+
+                                barberId:
+                                    availableBarber.id,
+
+                                serviceId,
+
+                                startTime:
+                                    start,
+
+                                endTime:
+                                    end,
+                            },
+
+                            include: {
+                                customer:
+                                    true,
+
+                                barber:
+                                    true,
+
+                                service:
+                                    true,
+                            },
+                        });
                     },
-                });
 
-            if (
-                !conflictingReservation
-            ) {
-                availableBarber =
-                    barber;
+                    {
+                        isolationLevel:
+                            'Serializable',
+                    },
+                );
+            } catch (error: unknown) {
+                // ================================================
+                // PRISMA P2034
+                //
+                // Conflicto entre transacciones o deadlock.
+                // ================================================
 
-                break;
+                const errorCode =
+                    typeof error ===
+                        'object' &&
+                        error !== null &&
+                        'code' in error
+                        ? (
+                            error as {
+                                code?: string;
+                            }
+                        ).code
+                        : undefined;
+
+                // ------------------------------------------------
+                // SI TODAVÍA QUEDAN INTENTOS, REPETIR
+                // ------------------------------------------------
+
+                if (
+                    errorCode ===
+                    'P2034' &&
+                    attempt <
+                    MAX_RETRIES
+                ) {
+                    continue;
+                }
+
+                // ------------------------------------------------
+                // SI YA SE AGOTARON LOS INTENTOS
+                // ------------------------------------------------
+
+                if (
+                    errorCode ===
+                    'P2034'
+                ) {
+                    throw new BadRequestException(
+                        'El horario acaba de ser ocupado. Selecciona otro horario.',
+                    );
+                }
+
+                // ------------------------------------------------
+                // OTROS ERRORES SE CONSERVAN
+                // ------------------------------------------------
+
+                throw error;
             }
         }
 
         // ========================================================
-        // 1.18 SIN BARBEROS DISPONIBLES
+        // SEGURIDAD DE TYPESCRIPT
+        //
+        // En condiciones normales nunca llegaremos aquí.
         // ========================================================
 
-        if (
-            !availableBarber
-        ) {
-            throw new BadRequestException(
-                'No hay barberos disponibles para ese horario',
-            );
-        }
-
-        // ========================================================
-        // 1.19 CREAR RESERVACIÓN
-        // ========================================================
-
-        return this.prisma.reservation.create({
-            data: {
-                customerId,
-
-                barberId:
-                    availableBarber.id,
-
-                serviceId,
-
-                startTime:
-                    start,
-
-                endTime:
-                    end,
-            },
-
-            include: {
-                customer: true,
-                barber: true,
-                service: true,
-            },
-        });
+        throw new BadRequestException(
+            'No se pudo procesar la reservación',
+        );
     }
 
     // ============================================================
     // 2. OBTENER TODAS LAS RESERVACIONES
     //
-    // También permite:
+    // GET /reservations
     //
+    // Opcional:
     // GET /reservations?date=YYYY-MM-DD
     // ============================================================
 
@@ -524,9 +653,14 @@ export class ReservationsService {
             },
 
             include: {
-                customer: true,
-                barber: true,
-                service: true,
+                customer:
+                    true,
+
+                barber:
+                    true,
+
+                service:
+                    true,
             },
         });
     }
@@ -560,9 +694,14 @@ export class ReservationsService {
             },
 
             include: {
-                customer: true,
-                barber: true,
-                service: true,
+                customer:
+                    true,
+
+                barber:
+                    true,
+
+                service:
+                    true,
             },
 
             orderBy: {
@@ -575,8 +714,9 @@ export class ReservationsService {
     // ============================================================
     // 4. CANCELAR RESERVACIÓN
     //
-    // Solo puede cancelarse con al menos
-    // 2 horas de anticipación.
+    // Regla:
+    // Solo se puede cancelar con al menos 2 horas
+    // de anticipación.
     // ============================================================
 
     async cancel(
@@ -687,9 +827,14 @@ export class ReservationsService {
             },
 
             include: {
-                customer: true,
-                barber: true,
-                service: true,
+                customer:
+                    true,
+
+                barber:
+                    true,
+
+                service:
+                    true,
             },
         });
     }
@@ -698,6 +843,10 @@ export class ReservationsService {
     // 5. COMPLETAR RESERVACIÓN
     //
     // CONFIRMED -> COMPLETED
+    //
+    // IMPORTANTE:
+    // No estamos validando si la cita ya comenzó,
+    // tal como solicitaste.
     // ============================================================
 
     async complete(
@@ -763,24 +912,30 @@ export class ReservationsService {
             },
 
             include: {
-                customer: true,
-                barber: true,
-                service: true,
+                customer:
+                    true,
+
+                barber:
+                    true,
+
+                service:
+                    true,
             },
         });
     }
 
     // ============================================================
-    // 6. OBTENER RESERVACIONES POR TELÉFONO
+    // 6. OBTENER RESERVACIONES DE UN CLIENTE POR TELÉFONO
     // ============================================================
 
     async findByCustomerPhone(
         phone: string,
     ) {
+        const cleanPhone =
+            phone?.trim();
+
         if (
-            !phone ||
-            phone.trim().length ===
-            0
+            !cleanPhone
         ) {
             throw new BadRequestException(
                 'El número de teléfono es obligatorio',
@@ -790,7 +945,8 @@ export class ReservationsService {
         const customer =
             await this.prisma.customer.findUnique({
                 where: {
-                    phone,
+                    phone:
+                        cleanPhone,
                 },
             });
 
@@ -814,28 +970,23 @@ export class ReservationsService {
             },
 
             include: {
-                customer: true,
-                barber: true,
-                service: true,
+                customer:
+                    true,
+
+                barber:
+                    true,
+
+                service:
+                    true,
             },
         });
     }
 
     // ============================================================
-    // 7. UTILIDAD PRIVADA:
-    //    OBTENER RANGO UTC DE UN DÍA LOCAL DE LA BARBERÍA
+    // 7. UTILIDAD PRIVADA
     //
-    // Ejemplo:
-    //
-    // fecha solicitada:
-    // 2026-08-24
-    //
-    // obtenemos:
-    //
-    // inicio 2026-08-24 00:00 hora barbería
-    // fin    2026-08-25 00:00 hora barbería
-    //
-    // y ambos se convierten correctamente a UTC.
+    // OBTENER EL RANGO UTC CORRESPONDIENTE A UN DÍA LOCAL
+    // DE LA BARBERÍA.
     // ============================================================
 
     private getLocalDayRange(
